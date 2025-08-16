@@ -69,7 +69,7 @@ else
   redis.call("EXPIRE", key, expire_time)
   return 1 -- Allow
 end
-
+```
 
 
 ## 🥜 In a Nutshell: Redis Sorted Set Rate Limiting
