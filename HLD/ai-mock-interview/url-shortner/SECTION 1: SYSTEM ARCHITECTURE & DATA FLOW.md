@@ -1004,4 +1004,945 @@ All events for aBc123 are ordered in Partition 0
 │          REDIRECT WITH ASYNC ANALYTICS                   │
 └──────────────────────────────────────────────────────────┘
 
-GET /
+GET /aBc123
+     ↓
+[Service]
+     ↓
+Decode → ID: 123456789
+     ↓
+[Check Cache/DB]
+     ↓
+Got: https://google.com
+     ↓
+┌────▼────────────────────────────────────────────────────┐
+│  PUBLISH EVENT TO KAFKA (Non-blocking!)                 │
+│                                                          │
+│  Event: {                                                │
+│    type: "url_clicked",                                  │
+│    short_url_id: 123456789,                              │
+│    user_ip: "...",                                       │
+│    timestamp: now()                                      │
+│  }                                                       │
+│                                                          │
+│  Kafka: kafka.publish("url-events", event)              │
+│  - Async operation (fire-and-forget)                    │
+│  - Returns immediately (doesn't wait)                   │
+│  - If Kafka slow/down: log warning, continue            │
+└──────────────────────────────────────────────────────────┘
+     ↓
+Return 302 https://google.com
+     ↓
+User redirected! (Total: 50ms)
+
+
+MEANWHILE (in background):
+     
+Kafka → Consumer Group (Analytics Workers)
+     ↓
+[Worker 1] processes event
+     ↓
+Enrich event:
+  - GeoIP lookup: IP → Country/City
+  - User-Agent parse: Device/Browser/OS
+     ↓
+[Batch insert to ClickHouse]
+  - Collect 10,000 events
+  - Bulk insert (efficient!)
+     ↓
+[Analytics DB updated]
+```
+
+---
+
+#### **Consumer Worker Logic:**
+
+**What the analytics worker does:**
+
+```
+FUNCTION process_click_event(event):
+    
+    // 1. Enrich event with additional data
+    geo_data = geoip_lookup(event.user_ip)
+    event.country = geo_data.country
+    event.city = geo_data.city
+    
+    device_data = parse_user_agent(event.user_agent)
+    event.device_type = device_data.device  // "mobile", "desktop"
+    event.browser = device_data.browser      // "Chrome", "Safari"
+    event.os = device_data.os                // "iOS", "Windows"
+    
+    // 2. Add to batch
+    batch.add(event)
+    
+    // 3. When batch reaches 10,000 events or 30 seconds elapsed
+    IF batch.size >= 10000 OR time_elapsed > 30:
+        clickhouse.bulk_insert(batch)
+        batch.clear()
+```
+
+**Why batching?**
+- ✅ ClickHouse performs best with bulk inserts
+- ✅ 10,000 events in 1 insert vs 10,000 individual inserts
+- ✅ Reduces DB load by 1000x
+
+---
+
+#### **Handling Kafka Failures:**
+
+**Scenario 1: Kafka is temporarily down**
+
+```
+Service tries to publish event → Kafka unavailable
+     ↓
+Options:
+  A) Retry with timeout (5 attempts, 100ms each)
+  B) Log event to local file (backup)
+  C) Continue anyway (user experience not affected)
+  
+Chosen: B + C
+  - Log to file: /var/log/events/2025-11-29.log
+  - Background job: Replay from file when Kafka recovers
+  - User: Gets redirect immediately (doesn't know Kafka failed)
+```
+
+**Scenario 2: Consumer worker crashes**
+
+```
+Kafka retains events for 7 days
+     ↓
+Worker crashes mid-processing
+     ↓
+Kafka: Event still in queue (not committed)
+     ↓
+New worker starts
+     ↓
+Kafka: Sends same event again
+     ↓
+Worker: Processes event (idempotent operation)
+     ↓
+Success! No data lost.
+```
+
+**Key: Idempotent processing**
+```
+ClickHouse: INSERT with deduplication
+  - Use event_id as unique key
+  - Duplicate inserts ignored
+  - Same event processed twice = only stored once
+```
+
+---
+
+#### **Multiple Consumers for Different Purposes:**
+
+```
+                    [Kafka Topic: url-events]
+                              ↓
+        ┌────────────────────┼────────────────────┐
+        ↓                    ↓                    ↓
+[Consumer Group 1]   [Consumer Group 2]   [Consumer Group 3]
+Analytics Workers    Fraud Detection      ML Training
+        ↓                    ↓                    ↓
+[ClickHouse]          [Flag suspicious]   [Click prediction]
+                      [Block if abuse]    [Recommendation]
+```
+
+**Each consumer group processes ALL events independently!**
+
+**Use cases:**
+
+1. **Analytics Workers:** 
+   - Store in ClickHouse
+   - Generate reports/dashboards
+
+2. **Fraud Detection Workers:**
+   - Detect bot traffic (100 clicks in 1 second)
+   - Flag malicious URLs (many users report it)
+   - Block abusive IPs
+
+3. **ML Training Workers:**
+   - Train click prediction models
+   - Recommendation engine (similar URLs)
+   - Spam detection
+
+**Benefit:** Add new consumers without changing existing system!
+
+---
+
+#### **Event Ordering Guarantees:**
+
+**Problem:** What if events arrive out of order?
+
+```
+User clicks URL:
+  Event 1: Click at 10:00:00 → Network delay → Arrives at 10:00:05
+  Event 2: Click at 10:00:02 → Fast network → Arrives at 10:00:03
+
+Worker receives: Event 2 before Event 1! ❌
+```
+
+**Kafka solution: Partition-level ordering**
+
+```
+All events for same short_url_id go to same partition
+Partition guarantees FIFO order
+Worker processes events in order within partition
+
+Result: Events for URL aBc123 are always ordered ✓
+        Events for different URLs may be out of order (OK!)
+```
+
+**Do we need strict ordering?**
+- For analytics: **NO** (don't care if Event A processed before Event B)
+- For state machines: **YES** (order matters)
+
+**URL shortener:** Analytics don't need strict ordering, so we're fine!
+
+---
+
+#### **Monitoring Async Processing:**
+
+**Key metrics to track:**
+
+```
+1. Kafka Producer (Service side):
+   - events_published_per_second
+   - publish_errors_per_second
+   - publish_latency_p95
+   
+   Alert if:
+     - publish_errors > 10/sec (Kafka having issues)
+     - publish_latency > 100ms (Kafka overloaded)
+
+2. Kafka Broker:
+   - consumer_lag (events waiting to be processed)
+   - partition_count
+   - disk_usage
+   
+   Alert if:
+     - consumer_lag > 100,000 (workers too slow)
+     - disk_usage > 80% (need more storage)
+
+3. Consumer Workers:
+   - events_processed_per_second
+   - processing_errors_per_second
+   - clickhouse_insert_latency
+   
+   Alert if:
+     - processing_errors > 5/sec (workers buggy)
+     - events_processed < 1000/sec (workers too slow, scale up!)
+
+4. Analytics DB (ClickHouse):
+   - rows_inserted_per_second
+   - query_latency_p95
+   
+   Alert if:
+     - query_latency > 5 seconds (dashboard slow)
+```
+
+---
+
+### 📊 Key Takeaways
+
+1. **Never block user requests with analytics:** Use async processing (Kafka) so users get instant responses
+
+2. **Kafka over RabbitMQ:** For high-throughput analytics (millions of events/day)
+
+3. **Batch processing:** Workers collect 10K events → bulk insert (efficient!)
+
+4. **Multiple consumers:** Same events processed by analytics, fraud detection, ML training
+
+5. **Idempotent operations:** Same event processed twice = no problem (use event_id)
+
+6. **Monitor consumer lag:** If lag grows, scale up workers
+
+7. **Graceful degradation:** If Kafka down, log to file, replay later
+
+---
+
+### 🔗 Further Reading
+
+- **Kafka documentation:** Partitions, Consumer Groups, Offsets
+- **"Designing Data-Intensive Applications":** Chapter 11 (Stream Processing)
+- **LinkedIn Engineering Blog:** How they use Kafka at scale
+
+---
+
+### ✏️ Practice Exercise
+
+**Scenario:** Your consumer lag keeps growing. Workers are processing 3,000 events/sec, but Kafka is receiving 5,000 events/sec.
+
+**Questions:**
+1. What's the immediate problem?
+2. How would you solve it short-term?
+3. How would you prevent it long-term?
+
+<details>
+<summary>Click to see answer</summary>
+
+**1. Immediate problem:**
+- Consumer lag growing at 2,000 events/sec
+- In 1 hour: 7.2 million events backlogged
+- Analytics data delayed by hours
+- If continues: Kafka disk fills up → system crash
+
+**2. Short-term solutions:**
+
+**Option A: Scale up workers (fastest)**
+```
+Current: 3 workers processing 3,000 events/sec
+Add: 2 more workers
+New total: 5 workers → 5,000 events/sec ✓
+Lag stops growing, starts decreasing
+```
+
+**Option B: Increase batch size**
+```
+Current: Batch of 10,000 events → ClickHouse insert takes 500ms
+New: Batch of 50,000 events → Insert takes 1 second
+Result: 5x fewer inserts → 5x faster processing
+```
+
+**Option C: Optimize ClickHouse inserts**
+```
+- Use more efficient data types
+- Remove unnecessary indexes during insert
+- Use multiple ClickHouse nodes (sharding)
+```
+
+**3. Long-term prevention:**
+
+**A. Auto-scaling:**
+```
+Monitor: consumer_lag metric
+Rule: If lag > 50,000 for 5 minutes
+Action: Add 2 more worker instances
+Result: Automatic scaling during traffic spikes
+```
+
+**B. Capacity planning:**
+```
+Expected traffic: 4,000 events/sec average
+Peak traffic: 10,000 events/sec (5x surge during viral link)
+Worker capacity: 1,000 events/sec per worker
+Required workers: 10,000 / 1,000 = 10 workers minimum
+Add 50% buffer: 15 workers total
+```
+
+**C. Alternative: Downsample during peak**
+```
+If lag > 100,000:
+  - Sample 10% of click events (still statistically significant)
+  - Process all "url_created" events (never drop these)
+  - Resume 100% processing when lag recovers
+```
+
+</details>
+
+---
+
+## **1.4 Service Component Clarity**
+
+### 🤔 Interview Question/Context
+
+**Interviewer:** "I see a box labeled 'Long URL Service' in your architecture receiving the 302 redirect. Can you explain what this component does and why it's separate from your main service?"
+
+### ❌ Your Initial Answer
+
+In your diagram, you drew:
+
+```
+Client → Service → 302 Redirect → Long URL Service
+```
+
+This created confusion because:
+- **It looked like a separate microservice** for handling long URLs
+- **Purpose was unclear** - what does this service actually do?
+- **302 redirect endpoint** - the client receives the redirect and goes directly to the destination, no intermediate service needed
+
+**The issue:** Unclear service boundaries and confusion about how HTTP redirects work.
+
+---
+
+### ✅ Complete Answer
+
+#### **How HTTP 302 Redirect Actually Works:**
+
+**User's browser behavior:**
+
+```
+Step 1: User clicks https://tiny.url/aBc123
+        ↓
+Step 2: Browser sends: GET /aBc123
+        ↓
+Step 3: Service responds:
+        HTTP/1.1 302 Found
+        Location: https://google.com
+        ↓
+Step 4: Browser AUTOMATICALLY makes new request:
+        GET https://google.com
+        ↓
+Step 5: Google.com responds with its homepage
+        ↓
+User sees: Google homepage
+
+NO "Long URL Service" needed!
+Browser handles redirect automatically.
+```
+
+**Key insight:** Once service returns 302, the client (browser) takes over. Service is done!
+
+---
+
+#### **Correct Service Architecture:**
+
+**Option 1: Monolithic Service (Recommended for URL Shortener)** ✅
+
+```
+┌──────────────────────────────────────────┐
+│      URL Shortener Service               │
+│                                          │
+│  Responsibilities:                       │
+│  1. Create short URL (POST /api/v1/urls)│
+│  2. Redirect (GET /{shortCode})         │
+│  3. URL validation                       │
+│  4. Rate limiting                        │
+│  5. Analytics event publishing           │
+│                                          │
+│  Components:                             │
+│  - API handlers                          │
+│  - Business logic                        │
+│  - DB access layer                       │
+│  - Cache client                          │
+│  - Kafka producer                        │
+└──────────────────────────────────────────┘
+```
+
+**Why monolith for this use case?**
+- ✅ Simple: Only 2 main operations (create, redirect)
+- ✅ Low latency: No inter-service network calls
+- ✅ Easy to deploy: Single service, one codebase
+- ✅ Sufficient scale: Can handle millions of requests with horizontal scaling
+
+**When to keep it monolithic:**
+- Service is small (<10 endpoints)
+- Operations are tightly coupled
+- Team is small (<10 engineers)
+- Latency is critical (no extra hops)
+
+---
+
+**Option 2: Microservices Architecture** (Only if needed at massive scale)
+
+```
+┌─────────────────┐
+│  API Gateway    │  ← Single entry point
+└────────┬────────┘
+         │
+    ┌────┼────┬─────────┬──────────┐
+    ↓    ↓    ↓         ↓          ↓
+┌────────┐ ┌─────────┐ ┌────────┐ ┌──────────┐
+│ Create │ │Redirect │ │ Auth   │ │Analytics │
+│Service │ │Service  │ │Service │ │Service   │
+└────────┘ └─────────┘ └────────┘ └──────────┘
+```
+
+**When to split into microservices:**
+- **Different teams:** Create URL team ≠ Analytics team
+- **Different scaling needs:** Redirects need 10x more instances than create
+- **Different technologies:** Redirect in Go (fast), analytics in Python (ML libraries)
+- **Independent deployment:** Deploy analytics updates without touching redirect service
+
+**For URL shortener at your scale (40 WPS, 4000 RPS):** **Monolith is better!**
+
+---
+
+#### **Common Microservice Anti-Patterns to Avoid:**
+
+**Anti-Pattern 1: Over-segmentation**
+
+```
+❌ BAD:
+- URL Validation Service
+- ID Generation Service  
+- Database Write Service
+- Cache Service
+- Analytics Service
+
+Problem: 5 network hops for 1 operation → latency explosion!
+Create URL: 50ms becomes 250ms (5 × 50ms per hop)
+```
+
+**Anti-Pattern 2: Shared Database**
+
+```
+❌ BAD:
+Service A ─┐
+           ├──→ [Same Database] ← Tight coupling!
+Service B ─┘
+
+Problem: Services coupled via database schema
+         Can't change schema without coordinating all services
+```
+
+**Anti-Pattern 3: Synchronous Chain**
+
+```
+❌ BAD:
+Client → Service A → Service B → Service C → DB
+        (waits)    (waits)    (waits)
+
+Problem: Any service failure breaks entire chain
+         Latency = sum of all services
+```
+
+---
+
+### 🎯 URL Shortener Context
+
+#### **Recommended Service Structure:**
+
+**Single Service with Clear Internal Modules:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│            URL Shortener Service (Monolith)              │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ┌────────────────────────────────────────────┐         │
+│  │  API Layer (HTTP Handlers)                 │         │
+│  │  - POST /api/v1/urls                       │         │
+│  │  - GET /{shortCode}                        │         │
+│  │  - GET /api/v1/urls/{shortCode}/info       │         │
+│  └────────────────┬───────────────────────────┘         │
+│                   ↓                                      │
+│  ┌────────────────────────────────────────────┐         │
+│  │  Business Logic Layer                      │         │
+│  │  - URL validation                          │         │
+│  │  - Duplicate detection                     │         │
+│  │  - Snowflake ID generation                 │         │
+│  │  - Base62 encoding                         │         │
+│  └────────────────┬───────────────────────────┘         │
+│                   ↓                                      │
+│  ┌────────────────────────────────────────────┐         │
+│  │  Data Access Layer                         │         │
+│  │  - Cache client (Redis)                    │         │
+│  │  - Database client (PostgreSQL)            │         │
+│  │  - Message queue client (Kafka)            │         │
+│  └────────────────────────────────────────────┘         │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Benefits of this structure:**
+- ✅ **Modular code:** Easy to test each layer independently
+- ✅ **Single deployment:** No microservice coordination
+- ✅ **Low latency:** All logic in same process (no network calls)
+- ✅ **Simple scaling:** Horizontal scaling (add more instances)
+
+---
+
+#### **When to Extract a Microservice:**
+
+**Scenario 1: Analytics becomes complex**
+
+```
+BEFORE (Monolith):
+Service → Kafka → (Analytics logic inside main service)
+
+AFTER (Extract):
+Service → Kafka → [Dedicated Analytics Service]
+                         ↓
+                  - Click aggregation
+                  - Fraud detection  
+                  - ML predictions
+                  - Report generation
+```
+
+**Why extract?**
+- Analytics team can deploy independently
+- Different programming language (Python for ML)
+- Different scaling (analytics needs 2 workers, main service needs 10)
+
+---
+
+**Scenario 2: Custom URL feature grows**
+
+```
+BEFORE:
+Main Service handles:
+  - Regular short URLs
+  - Custom short URLs (simple)
+
+AFTER:
+Main Service: Regular short URLs
+Custom URL Service: 
+  - Slug availability check
+  - Slug reservation system
+  - Premium features (branded domains)
+  - Billing integration
+```
+
+**Why extract?**
+- Custom URLs have different business logic
+- Separate team owns custom URL feature
+- Can charge differently (premium feature)
+
+---
+
+#### **Service Communication Patterns:**
+
+**Pattern 1: Synchronous (REST/gRPC)** - When you need immediate response
+
+```
+Use case: API Gateway → Auth Service
+         "Is this API key valid?"
+         
+Need immediate answer to proceed with request.
+
+┌─────────┐  HTTP/gRPC   ┌──────────┐
+│ Service │─────────────→│   Auth   │
+│    A    │←─────────────│ Service  │
+└─────────┘   Response   └──────────┘
+   ↓ Wait for response before continuing
+```
+
+---
+
+**Pattern 2: Asynchronous (Message Queue)** - When you don't need immediate response
+
+```
+Use case: URL clicked → Analytics
+         "Log this click event"
+         
+Don't need to wait for analytics to complete.
+
+┌─────────┐  Publish   ┌───────┐  Consume  ┌──────────┐
+│ Service │───────────→│ Kafka │──────────→│Analytics │
+│    A    │            └───────┘           │ Service  │
+└─────────┘                                └──────────┘
+   ↓ Continue immediately (don't wait)
+```
+
+---
+
+**Pattern 3: Service Mesh (Advanced)** - For complex microservice environments
+
+```
+Every service has a sidecar proxy (Envoy)
+Handles:
+  - Service discovery
+  - Load balancing
+  - Retries
+  - Circuit breaking
+  - Distributed tracing
+
+Tools: Istio, Linkerd, Consul
+
+Only needed when you have 10+ microservices!
+```
+
+---
+
+#### **Deployment Architecture:**
+
+**Horizontal Scaling of Monolith:**
+
+```
+                [Load Balancer]
+                       ↓
+        ┌──────────────┼──────────────┐
+        ↓              ↓              ↓
+[Service Instance 1] [Instance 2] [Instance 3]
+        │              │              │
+        └──────────────┼──────────────┘
+                       ↓
+            [Shared: Redis, DB, Kafka]
+```
+
+**Each instance:**
+- Identical code
+- Stateless (no local state)
+- Can handle any request
+- Auto-scaled based on CPU/memory
+
+**Scaling strategy:**
+```
+CPU > 70% for 5 minutes → Add 2 instances
+CPU < 30% for 10 minutes → Remove 1 instance
+Min instances: 3 (high availability)
+Max instances: 20 (cost control)
+```
+
+---
+
+#### **Database Access: Master-Slave Pattern**
+
+**Service routing logic:**
+
+```
+FUNCTION handle_request(request):
+    
+    IF request.method == "GET":
+        // Read operation
+        db_connection = get_slave_connection()
+        // Round-robin across slave replicas
+        
+    ELSE IF request.method in ["POST", "PUT", "DELETE"]:
+        // Write operation
+        db_connection = get_master_connection()
+        // All writes go to master only
+    
+    result = db_connection.execute(query)
+    
+    RETURN result
+```
+
+**Why this pattern?**
+- ✅ **Read scaling:** Distribute reads across multiple slaves
+- ✅ **Write safety:** All writes through single master (consistency)
+- ✅ **Fault tolerance:** If slave dies, route to other slaves
+
+**Configuration:**
+```
+Database connections:
+  Master: db-master.internal:5432 (writes only)
+  Slaves: 
+    - db-slave-1.internal:5432 (reads)
+    - db-slave-2.internal:5432 (reads)
+    - db-slave-3.internal:5432 (reads)
+  
+Connection pool:
+  Master pool: 20 connections
+  Slave pool: 50 connections (more reads!)
+```
+
+---
+
+#### **Health Checks & Circuit Breakers:**
+
+**Health check endpoint:**
+
+```
+GET /health
+
+Response:
+{
+  "status": "healthy",
+  "checks": {
+    "database": "ok",
+    "redis": "ok",
+    "kafka": "ok"
+  },
+  "uptime_seconds": 86400
+}
+```
+
+**Load balancer uses this:**
+- Pings /health every 5 seconds
+- If 3 consecutive failures → remove instance from rotation
+- If instance recovers → add back to rotation
+
+---
+
+**Circuit breaker pattern:**
+
+```
+Service → External API (Google Safe Browsing)
+
+States:
+1. CLOSED (normal): All requests go through
+2. OPEN (failure): Block all requests (fail fast)
+3. HALF-OPEN (testing): Allow 1 request to test if recovered
+
+Transition:
+CLOSED → OPEN: After 5 consecutive failures
+OPEN → HALF-OPEN: After 60 seconds
+HALF-OPEN → CLOSED: If test request succeeds
+HALF-OPEN → OPEN: If test request fails
+```
+
+**Benefits:**
+- ✅ Fail fast (don't wait for timeout)
+- ✅ Give external service time to recover
+- ✅ Automatic recovery testing
+
+---
+
+### 📊 Key Takeaways
+
+1. **No "Long URL Service" needed:** Browser handles 302 redirects automatically
+
+2. **Monolith is fine:** For URL shortener, single service is simpler and faster than microservices
+
+3. **Clear layering:** API → Business Logic → Data Access (within monolith)
+
+4. **Extract microservices only when:** Different teams, different scaling, different tech stacks
+
+5. **Horizontal scaling:** Add more instances of same service (stateless design)
+
+6. **Health checks:** Load balancer removes unhealthy instances automatically
+
+7. **Circuit breakers:** Fail fast when dependencies are down
+
+---
+
+### 🔗 Further Reading
+
+- **"Building Microservices" by Sam Newman:** When to split, when not to
+- **Martin Fowler's blog:** "Monolith First" pattern
+- **Netflix Tech Blog:** How they evolved from monolith to microservices
+
+---
+
+### ✏️ Practice Exercise
+
+**Scenario:** Your company wants to add these features:
+1. QR code generation for short URLs
+2. URL expiration (auto-delete after 30 days)
+3. A/B testing (redirect 50% users to URL A, 50% to URL B)
+4. Browser extension for creating short URLs
+
+**Questions:**
+1. Which features stay in monolith?
+2. Which features become separate microservices?
+3. Why?
+
+<details>
+<summary>Click to see answer</summary>
+
+**Analysis:**
+
+**1. QR Code Generation:**
+**Decision: Keep in monolith** ✅
+**Why:**
+- Simple operation (generate QR from short URL)
+- Synchronous (user waits for QR code)
+- Doesn't need separate scaling (not many requests)
+- Can use library (qrcode.js)
+
+**Implementation:**
+```
+GET /api/v1/urls/{shortCode}/qr
+
+Returns: PNG image of QR code
+```
+
+---
+
+**2. URL Expiration:**
+**Decision: Keep in monolith** ✅
+**Why:**
+- Part of core URL lifecycle
+- Needs access to main database (url_mappings table)
+- Simple background job (cron)
+
+**Implementation:**
+```
+Cron job (runs daily):
+  DELETE FROM url_mappings 
+  WHERE created_at < NOW() - INTERVAL '30 days'
+  AND expiration_enabled = true
+```
+
+---
+
+**3. A/B Testing:**
+**Decision: Extract to microservice** 🔄
+**Why:**
+- Complex logic (experiment management, statistical analysis)
+- Separate team (data science/experimentation team)
+- Different scaling (analytics-heavy)
+- Doesn't affect core redirect performance
+
+**Architecture:**
+```
+User → Service → A/B Service: "Which variant?"
+              → A/B Service returns: "URL A"
+              → Redirect to URL A
+              → Log to analytics
+```
+
+**Better approach:**
+```
+A/B Service publishes rules to cache:
+  "shortcode_abc: 50% → URL A, 50% → URL B"
+
+Main service:
+  Read rule from cache (fast!)
+  Randomly assign user
+  Redirect accordingly
+```
+
+---
+
+**4. Browser Extension:**
+**Decision: Keep in monolith (reuse API)** ✅
+**Why:**
+- Browser extension is a CLIENT, not a service
+- Uses existing API: POST /api/v1/urls
+- No new backend service needed!
+
+**Architecture:**
+```
+[Browser Extension]
+      ↓ (uses existing API)
+[Main Service] → POST /api/v1/urls
+      ↓
+Create short URL as usual
+```
+
+---
+
+**Final Architecture:**
+
+```
+┌────────────────────────────────────┐
+│   URL Shortener Service (Monolith) │
+│   - Create URL                     │
+│   - Redirect                       │
+│   - QR generation                  │
+│   - Expiration cron                │
+└───────────────┬────────────────────┘
+                │
+                ├─→ [A/B Testing Service] (Microservice)
+                │
+                ├─→ [Analytics Service] (Microservice)
+                │
+                └─→ [Fraud Detection Service] (Microservice)
+
+Clients:
+- Web UI
+- Mobile App
+- Browser Extension (all use same API)
+```
+
+**Principle:** Start monolith, extract only when there's clear benefit!
+
+</details>
+
+---
+
+# **End of Section 1** ✅
+
+---
+
+## **Section 1 Completion Checklist:**
+
+- ☑ **1.1 Cache Strategy & Placement** - Understand where and how to cache
+- ☑ **1.2 Rate Limiter Architecture** - Centralized rate limiting with Redis
+- ☑ **1.3 Async Processing** - Kafka for analytics (non-blocking)
+- ☑ **1.4 Service Clarity** - Monolith vs microservices decision
+
+**Progress:** Section 1 complete! (4/32 topics = 12.5%)
+
+---
+
+**Ready for Section 2 (Monitoring & Observability)?** 🚀
+
+Or would you like to:
+- Review any topic from Section 1
+- Practice exercises from Section 1
+- Move to a different section
+
+Let me know! 💪
