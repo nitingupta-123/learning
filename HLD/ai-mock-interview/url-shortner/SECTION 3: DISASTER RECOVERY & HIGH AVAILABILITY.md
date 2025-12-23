@@ -2613,4 +2613,240 @@ Replication lag: <1 second
 Scenario: Shard 1, Node 1A dies (disk failure)
 
 Immediate impact:
-  - Queries still work (Node 1B
+  - Queries still work (Node 1B handles queries)
+  - Inserts still work (redirect to Node 1B)
+  - Zero downtime! ✓
+
+Recovery:
+  1. Provision new Node 1A
+  2. Configure as replica of Shard 1
+  3. Automatic sync from Node 1B
+  4. Resume normal operations
+
+Recovery time: 30 minutes (for sync)
+Data loss: Zero ✓
+```
+
+---
+
+**Multi-datacenter replication:**
+
+```
+Primary datacenter (US-EAST):
+  Shard 1A, 2A, 3A (primary)
+  Shard 1B, 2B, 3B (replica)
+
+Secondary datacenter (US-WEST):
+  Shard 1C, 2C, 3C (replica of US-EAST)
+
+Queries:
+  - US users query US-EAST cluster
+  - EU users query US-WEST cluster (lower latency)
+
+Writes:
+  - All writes go to US-EAST
+  - Replicate to US-WEST asynchronously
+
+If US-EAST fails:
+  - Promote US-WEST to primary
+  - Accept writes in US-WEST
+  - Resume operations
+
+RTO: 5 minutes
+RPO: 1 minute (replication lag)
+```
+
+---
+
+#### **Restore Procedures:**
+
+**Scenario 1: Single node failure**
+
+```
+Problem: Shard 1, Node 1A disk failure
+
+Recovery (automatic):
+  1. ClickHouse detects Node 1A down
+  2. Queries automatically route to Node 1B
+  3. Inserts automatically route to Node 1B
+  4. No manual intervention needed! ✓
+
+Manual recovery (rebuild Node 1A):
+  1. Provision new server
+  2. Install ClickHouse
+  3. Configure as replica:
+     <replica>1A</replica>
+     <shard>1</shard>
+  4. Start ClickHouse
+  5. Automatic sync from Node 1B begins
+  6. Wait for sync complete (30 min for 1 TB)
+  7. Node 1A rejoins cluster
+
+Downtime: 0 seconds (Node 1B handles everything)
+```
+
+---
+
+**Scenario 2: Entire shard failure**
+
+```
+Problem: Both Node 1A and Node 1B die
+
+Recovery:
+  1. Provision two new nodes
+  2. Restore from S3 backup
+     aws s3 sync s3://backups/shard1/ /var/lib/clickhouse/data/
+  3. Replay missing data from Kafka
+     - Last backup: 24 hours ago
+     - Replay last 24 hours from Kafka
+     - Duration: 2 hours
+  4. Resume operations
+
+Downtime: 3 hours (restore + replay)
+Data loss: 0 (replayed from Kafka)
+```
+
+---
+
+**Scenario 3: Complete cluster failure**
+
+```
+Problem: Entire ClickHouse cluster destroyed
+
+Recovery:
+  1. Provision new 6-node cluster (1 hour)
+  2. Restore from S3 backups (4 hours for 10 TB)
+  3. Replay last 30 days from Kafka (8 hours)
+  4. Verify data integrity (1 hour)
+
+Total recovery: 14 hours
+Data loss: Data older than 30 days (Kafka retention)
+
+Mitigation:
+  - Keep multi-region replicas (avoid full loss)
+  - Increase Kafka retention to 90 days
+```
+
+---
+
+#### **Backup Verification:**
+
+**Monthly verification test:**
+
+```bash
+#!/bin/bash
+# test-clickhouse-backup.sh
+
+echo "Starting ClickHouse backup verification..."
+
+# Step 1: Pick random partition to test
+PARTITION=$(date -d "7 days ago" +%Y%m%d)
+
+# Step 2: Download backup from S3
+aws s3 cp "s3://backups/clicks/$PARTITION/" \
+  /tmp/backup-test/ --recursive
+
+# Step 3: Create test database
+clickhouse-client --query="CREATE DATABASE backup_test"
+
+# Step 4: Create test table
+clickhouse-client --query="
+CREATE TABLE backup_test.clicks
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (short_url_id, timestamp)
+AS SELECT * FROM default.clicks WHERE 1=0
+"
+
+# Step 5: Attach partition from backup
+clickhouse-client --query="
+ALTER TABLE backup_test.clicks 
+ATTACH PARTITION '$PARTITION' 
+FROM '/tmp/backup-test/'
+"
+
+# Step 6: Verify row counts
+PRODUCTION_COUNT=$(clickhouse-client --query="
+SELECT COUNT(*) FROM default.clicks 
+WHERE toYYYYMMDD(timestamp) = '$PARTITION'
+")
+
+BACKUP_COUNT=$(clickhouse-client --query="
+SELECT COUNT(*) FROM backup_test.clicks
+")
+
+# Step 7: Compare
+if [ "$PRODUCTION_COUNT" -eq "$BACKUP_COUNT" ]; then
+  echo "✓ Backup verification passed!"
+  echo "  Production: $PRODUCTION_COUNT rows"
+  echo "  Backup: $BACKUP_COUNT rows"
+else
+  echo "✗ Backup verification FAILED!"
+  echo "  Production: $PRODUCTION_COUNT rows"
+  echo "  Backup: $BACKUP_COUNT rows"
+  alert_team "ClickHouse backup mismatch detected!"
+fi
+
+# Step 8: Cleanup
+clickhouse-client --query="DROP DATABASE backup_test"
+rm -rf /tmp/backup-test/
+```
+
+---
+
+### 📊 Key Takeaways
+
+1. **Analytics data is derived:** Can rebuild from Kafka (source of truth)
+
+2. **Replication is primary backup:** 2 replicas per shard = high availability
+
+3. **Partition-based backups:** Each day is immutable partition, backup independently
+
+4. **Multi-region for DR:** Replicate to secondary datacenter
+
+5. **Test restorations:** Monthly verification of backups
+
+6. **RTO for analytics:** 3 hours acceptable (not as critical as main DB)
+
+7. **Cost-effective:** Glacier storage for long-term ($55/month)
+
+---
+
+### 🔗 Further Reading
+
+- **ClickHouse documentation:** Backup and restore
+- **ClickHouse replication:** ReplicatedMergeTree engine
+- **S3 Glacier:** Long-term archival storage
+
+---
+
+# **End of Section 3** ✅
+
+---
+
+## **Section 3 Completion Checklist:**
+
+- ☑ **3.1 Multi-Region Architecture** - Active-passive failover
+- ☑ **3.2 Database Backup Strategies** - Full, incremental, snapshots
+- ☑ **3.3 RTO/RPO Concepts** - Business requirements for recovery
+- ☑ **3.4 ClickHouse Backup** - Analytics database strategies
+
+**Progress:** Section 3 complete! (12/32 topics = 37.5%)
+
+---
+
+**Fantastic work! You've completed over one-third of the study guide!** 🎉
+
+You now understand:
+- ✅ System architecture & data flow
+- ✅ Monitoring & observability  
+- ✅ Disaster recovery & high availability
+
+**Next up: Section 4 - Advanced Distributed Systems** (most technical section)
+
+**Would you like to:**
+1. **Continue to Section 4** (Bloom filters, sharding, distributed locks)
+2. **Take a break** and review what you've learned
+3. **Jump to a different section** (CDN, Security, etc.)
+
+What would you prefer? 🚀
