@@ -1152,5 +1152,776 @@ redis-cli --cluster create \
 
 
 
+# **SECTION 4: ADVANCED DISTRIBUTED SYSTEMS (DETAILED)** 🌐
 
+---
+
+## **4.3 Database Sharding Strategy**
+
+### 🤔 Interview Question/Context
+
+**Interviewer:** "Your database will grow to billions of URLs. How do you shard it? Why did you choose consistent hashing?"
+
+### ❌ Your Initial Answer
+
+You said: **"Use consistent hashing"**
+
+**The problem:** Consistent hashing is ONE option, but not optimal for time-ordered IDs like Snowflake.
+
+---
+
+### ✅ Complete Answer
+
+#### **Why Sharding is Needed:**
+
+```
+Single Database Limits:
+
+PostgreSQL single instance:
+  - Max connections: ~500-1000
+  - Max storage: ~1-2 TB (practical limit)
+  - Max throughput: ~10,000 writes/sec
+
+Our growth:
+  - Year 1: 1.2 billion URLs (500 GB)
+  - Year 3: 3.6 billion URLs (1.5 TB) ← hitting limits
+  - Year 5: 6 billion URLs (2.5 TB) ← MUST shard
+
+Solution: Split data across multiple database instances (shards)
+```
+
+---
+
+### 🎯 URL Shortener Context
+
+#### **Three Sharding Strategies:**
+
+### **Strategy 1: Range-Based Sharding (RECOMMENDED)** ✅
+
+**How it works:**
+
+```
+Partition by ID range:
+
+Shard 1: IDs 0 - 1,000,000,000
+Shard 2: IDs 1,000,000,001 - 2,000,000,000
+Shard 3: IDs 2,000,000,001 - 3,000,000,000
+Shard 4: IDs 3,000,000,001 - 4,000,000,000
+
+Routing logic:
+  if id <= 1_000_000_000:
+      route to Shard 1
+  elif id <= 2_000_000_000:
+      route to Shard 2
+  elif id <= 3_000_000_000:
+      route to Shard 3
+  else:
+      route to Shard 4
+```
+
+**Example queries:**
+
+```
+Query: Get URL with ID 500,000,000
+  500,000,000 <= 1B → Route to Shard 1
+  
+Query: Get URL with ID 1,500,000,000
+  1,500,000,000 > 1B AND <= 2B → Route to Shard 2
+  
+Query: Get URL with ID 3,200,000,000
+  3,200,000,000 > 3B → Route to Shard 4
+```
+
+---
+
+**Pros:**
+
+```
+✓ Simple routing logic (just compare ID ranges)
+
+✓ Time locality preserved
+  - Recent URLs are together (same shard)
+  - Useful for analytics: "URLs created this month"
+  - Query: "SELECT * FROM urls WHERE created_at > '2025-11-01'"
+    → Only hits newest shard(s)
+
+✓ Easy to add new shards
+  - Just add new range: Shard 5 for IDs 4B-5B
+  - No data migration needed
+  - Old shards untouched
+
+✓ Range queries work
+  - "Get URLs created between Jan-March 2025"
+  - Since IDs are time-ordered (Snowflake), can query specific shards
+```
+
+**Cons:**
+
+```
+✗ Hotspot problem (write skew)
+  
+  All new URLs go to newest shard:
+  
+  Time: Nov 2025
+  Shard 1: 1B URLs (full, no new writes)
+  Shard 2: 1B URLs (full, no new writes)
+  Shard 3: 1B URLs (full, no new writes)
+  Shard 4: Currently at 200M URLs ← ALL writes here!
+  
+  Shard 4 is a hotspot - receives 100% of writes ❌
+```
+
+---
+
+**Solution to Hotspot:**
+
+```
+Use Snowflake ID structure to distribute writes:
+
+Snowflake ID: [timestamp][datacenter_id][worker_id][sequence]
+
+Routing formula:
+  shard_id = (datacenter_id × 32 + worker_id) % num_shards
+
+Example with 4 shards:
+  
+  Datacenter 1, Worker 1:
+    shard_id = (1 × 32 + 1) % 4 = 33 % 4 = 1 → Shard 1
+  
+  Datacenter 1, Worker 2:
+    shard_id = (1 × 32 + 2) % 4 = 34 % 4 = 2 → Shard 2
+  
+  Datacenter 1, Worker 3:
+    shard_id = (1 × 32 + 3) % 4 = 35 % 4 = 3 → Shard 3
+  
+  Datacenter 1, Worker 4:
+    shard_id = (1 × 32 + 4) % 4 = 36 % 4 = 0 → Shard 4
+  
+  Datacenter 2, Worker 1:
+    shard_id = (2 × 32 + 1) % 4 = 65 % 4 = 1 → Shard 1
+
+Result: Writes distributed evenly across all shards! ✓
+```
+
+**Distribution example:**
+
+```
+Setup: 10 service instances, 4 shards
+
+Instance 1 (dc=1, worker=1) → Shard 1 (25% of writes)
+Instance 2 (dc=1, worker=2) → Shard 2 (25% of writes)
+Instance 3 (dc=1, worker=3) → Shard 3 (25% of writes)
+Instance 4 (dc=1, worker=4) → Shard 4 (25% of writes)
+Instance 5 (dc=1, worker=5) → Shard 1 (25% of writes)
+Instance 6 (dc=1, worker=6) → Shard 2 (25% of writes)
+Instance 7 (dc=1, worker=7) → Shard 3 (25% of writes)
+Instance 8 (dc=1, worker=8) → Shard 4 (25% of writes)
+Instance 9 (dc=2, worker=1) → Shard 1 (25% of writes)
+Instance 10 (dc=2, worker=2) → Shard 2 (25% of writes)
+
+All shards receive roughly equal writes! ✓
+Time locality still preserved within each shard! ✓
+```
+
+---
+
+**Read routing:**
+
+```
+User clicks short URL: tiny.url/aBc123
+
+Step 1: Decode base62 → ID: 1,234,567,890
+
+Step 2: Calculate shard
+  Extract from ID: datacenter_id = 1, worker_id = 5
+  shard_id = (1 × 32 + 5) % 4 = 37 % 4 = 1
+
+Step 3: Query Shard 1
+  SELECT long_url FROM url_mappings WHERE id = 1234567890
+  
+Step 4: Return long_url, redirect user
+
+This ensures reads go to correct shard ✓
+```
+
+---
+
+### **Strategy 2: Hash-Based Sharding**
+
+**How it works:**
+
+```
+Partition by hash of ID:
+
+shard_id = hash(id) % num_shards
+
+Example with 4 shards:
+  hash(123) % 4 = 3 → Shard 3
+  hash(456) % 4 = 0 → Shard 0
+  hash(789) % 4 = 1 → Shard 1
+  hash(999) % 4 = 3 → Shard 3
+
+Data distributed randomly across shards based on hash function
+```
+
+---
+
+**Pros:**
+
+```
+✓ Even distribution
+  - Hash function ensures uniform distribution
+  - No hotspots
+  - Each shard receives ~25% of data (with 4 shards)
+
+✓ Simple implementation
+  - Just hash and modulo
+  - No special routing logic
+```
+
+**Cons:**
+
+```
+✗ No range queries
+  - "Get URLs created in January" requires querying ALL shards
+  - No time locality
+  - Every query must fan out to all shards
+
+✗ Adding shards is expensive (resharding)
+  
+  Problem:
+    Change from 4 shards to 5 shards
+    
+    Old: hash(id) % 4
+    New: hash(id) % 5
+    
+    Example:
+      ID 123: hash(123) % 4 = 3 (Shard 3)
+              hash(123) % 5 = 3 (Shard 3) ✓ same
+      
+      ID 456: hash(456) % 4 = 0 (Shard 0)
+              hash(456) % 5 = 1 (Shard 1) ✗ different!
+    
+    Result: Most data needs to move to different shards!
+    
+  Resharding process:
+    1. Provision Shard 5
+    2. For each ID in all shards:
+       - Calculate new shard: hash(id) % 5
+       - If different from current shard, move data
+    3. ~80% of data moves (expensive!)
+    
+  Downtime: Hours or days for billions of records
+```
+
+---
+
+**When to use:**
+
+```
+✓ Random IDs (not time-ordered)
+✓ Don't need range queries
+✓ Stable number of shards (rarely add new ones)
+
+Example: User database sharded by user_id hash
+  - Users created randomly over time
+  - No time locality needed
+  - Query by user_id only (no range queries)
+```
+
+---
+
+### **Strategy 3: Consistent Hashing**
+
+**How it works:**
+
+```
+Hash ring: 0 to 2^32-1 (circular)
+
+Step 1: Place servers on ring
+  hash("Server A") = 100 → position 100 on ring
+  hash("Server B") = 500 → position 500 on ring
+  hash("Server C") = 900 → position 900 on ring
+
+Step 2: Place keys on ring
+  hash(key) → position → go clockwise to next server
+
+Example:
+  hash("url:123") = 250 → Clockwise → Server B (position 500)
+  hash("url:456") = 700 → Clockwise → Server C (position 900)
+  hash("url:789") = 50  → Clockwise → Server A (position 100)
+
+Visual:
+          0/2^32
+           ↑
+   900 ←   C   → 100
+   C       |       A
+           |
+   500 ←   B
+
+Keys 0-99: → Server A
+Keys 100-499: → Server B
+Keys 500-899: → Server C
+Keys 900-2^32: → Server A
+```
+
+---
+
+**Adding a server:**
+
+```
+Add Server D at position 300:
+
+Before:
+  Keys 100-499 → Server B (400 keys)
+
+After:
+  Keys 100-299 → Server B (200 keys)
+  Keys 300-499 → Server D (200 keys)
+
+Data movement:
+  Only 200 keys move (from B to D)
+  Other servers (A, C) unaffected ✓
+
+Compare to hash-based:
+  Hash-based: 80% of data moves
+  Consistent hashing: Only ~25% of data moves (1/n where n = new num servers)
+```
+
+---
+
+**Virtual nodes (for better balance):**
+
+```
+Problem: Servers not evenly distributed on ring
+
+Physical placement:
+  Server A: position 100   (owns 0-99)
+  Server B: position 500   (owns 100-499) ← 400 keys
+  Server C: position 900   (owns 500-899) ← 400 keys
+  Server A wraps: 900-2^32 (owns 900-2^32) ← Many keys
+  
+  Imbalanced! ❌
+
+Solution: Virtual nodes
+  Each physical server gets 100 positions on ring
+  
+  Server A: positions 100, 250, 380, 500, ... (100 positions)
+  Server B: positions 150, 300, 420, 600, ... (100 positions)
+  Server C: positions 200, 350, 480, 700, ... (100 positions)
+  
+  Keys distributed evenly across 300 virtual nodes
+  Each physical server owns ~33% of keys ✓
+```
+
+---
+
+**Pros:**
+
+```
+✓ Adding/removing servers is cheap
+  - Only K/n keys move (K = total keys, n = num servers)
+  - With hash-based: ~80% of keys move
+  - With consistent hashing: ~25% move
+
+✓ Gradual rebalancing
+  - Move data in background
+  - Service stays available
+
+✓ Good for dynamic environments
+  - Cloud auto-scaling
+  - Nodes frequently join/leave
+```
+
+**Cons:**
+
+```
+✗ More complex to implement
+  - Hash ring management
+  - Virtual nodes
+  - Replication logic
+
+✗ Not optimal for time-ordered data
+  - No time locality
+  - Range queries don't work
+
+✗ More complex routing
+  - Need to maintain ring state
+  - All nodes must agree on ring topology
+```
+
+---
+
+**When to use:**
+
+```
+✓ Distributed caches (Memcached, Redis Cluster)
+  - Nodes frequently join/leave
+  - No time locality needed
+  - Key-value lookups only
+
+✓ Distributed databases with dynamic scaling
+  - Cassandra, DynamoDB
+  - Auto-scaling based on load
+
+✗ NOT for URL shortener
+  - We have time-ordered Snowflake IDs
+  - Range-based is simpler and better
+```
+
+---
+
+#### **Comparison Table:**
+
+```
+┌────────────────────┬──────────────┬──────────────┬────────────────┐
+│     Feature        │ Range-Based  │ Hash-Based   │ Consistent     │
+├────────────────────┼──────────────┼──────────────┼────────────────┤
+│ Write             │ ⚠ Hotspot    │ ✓ Even       │ ✓ Even         │
+│ distribution      │ (need fix)   │              │                │
+├────────────────────┼──────────────┼──────────────┼────────────────┤
+│ Fix for hotspot   │ ✓ Yes        │ N/A          │ N/A            │
+│                   │ (use dc+     │              │                │
+│                   │ worker_id)   │              │                │
+├────────────────────┼──────────────┼──────────────┼────────────────┤
+│ Range queries     │ ✓ Efficient  │ ✗ Must       │ ✗ Must         │
+│                   │              │ fan out      │ fan out        │
+├────────────────────┼──────────────┼──────────────┼────────────────┤
+│ Time locality     │ ✓ Preserved  │ ✗ Lost       │ ✗ Lost         │
+├────────────────────┼──────────────┼──────────────┼────────────────┤
+│ Add shard cost    │ ✓ Low        │ ✗ High       │ ✓ Medium       │
+│                   │ (no data     │ (~80% data   │ (~25% data     │
+│                   │ movement)    │ moves)       │ moves)         │
+├────────────────────┼──────────────┼──────────────┼────────────────┤
+│ Routing           │ ✓ Simple     │ ✓ Simple     │ ✗ Complex      │
+│ complexity        │              │              │                │
+├────────────────────┼──────────────┼──────────────┼────────────────┤
+│ Best for          │ Time-ordered │ Random IDs   │ Dynamic        │
+│                   │ IDs          │              │ caches         │
+└────────────────────┴──────────────┴──────────────┴────────────────┘
+
+For URL shortener with Snowflake IDs: Range-Based ✓
+```
+
+---
+
+#### **Implementation Details:**
+
+**Sharding proxy/router:**
+
+```
+Architecture:
+
+[Application]
+      ↓
+[Sharding Router] ← Knows which shard has which IDs
+      ↓
+   ┌──┴────┬────────┬────────┐
+   ↓       ↓        ↓        ↓
+[Shard 1][Shard 2][Shard 3][Shard 4]
+
+Router logic:
+  def get_shard(id):
+      # Extract datacenter and worker from Snowflake ID
+      datacenter_id = (id >> 17) & 0x1F  # Bits 17-21
+      worker_id = (id >> 12) & 0x1F      # Bits 12-16
+      
+      # Calculate shard
+      shard_id = (datacenter_id * 32 + worker_id) % num_shards
+      
+      return shards[shard_id]
+  
+  def query_url(id):
+      shard = get_shard(id)
+      return shard.query("SELECT * FROM url_mappings WHERE id = ?", id)
+```
+
+---
+
+**Handling shard unavailability:**
+
+```
+Scenario: Shard 2 is down
+
+Option 1: Fail fast
+  - Return error to user
+  - "Service temporarily unavailable"
+  - Simple but bad UX
+
+Option 2: Read from replica
+  - Each shard has replicas: Shard 2A, Shard 2B
+  - If 2A down, route to 2B
+  - High availability ✓
+
+Option 3: Retry with circuit breaker
+  - Try Shard 2
+  - If fails, mark as down for 60 seconds
+  - Route to replica
+  - After 60 seconds, try Shard 2 again
+
+Recommended: Option 2 + Option 3 combined
+```
+
+---
+
+**Sharding configuration:**
+
+```yaml
+# sharding_config.yaml
+
+shards:
+  - id: 1
+    master:
+      host: shard1-master.db.internal
+      port: 5432
+    replicas:
+      - host: shard1-replica1.db.internal
+        port: 5432
+      - host: shard1-replica2.db.internal
+        port: 5432
+  
+  - id: 2
+    master:
+      host: shard2-master.db.internal
+      port: 5432
+    replicas:
+      - host: shard2-replica1.db.internal
+        port: 5432
+      - host: shard2-replica2.db.internal
+        port: 5432
+  
+  - id: 3
+    master:
+      host: shard3-master.db.internal
+      port: 5432
+    replicas:
+      - host: shard3-replica1.db.internal
+        port: 5432
+      - host: shard3-replica2.db.internal
+        port: 5432
+  
+  - id: 4
+    master:
+      host: shard4-master.db.internal
+      port: 5432
+    replicas:
+      - host: shard4-replica1.db.internal
+        port: 5432
+      - host: shard4-replica2.db.internal
+        port: 5432
+
+routing:
+  strategy: snowflake_modulo
+  num_shards: 4
+```
+
+---
+
+### 📊 Key Takeaways
+
+1. **Range-based sharding is best** for Snowflake IDs (time-ordered data)
+
+2. **Hotspot fix:** Use `(datacenter_id × 32 + worker_id) % num_shards` to distribute writes evenly
+
+3. **Time locality preserved:** Recent URLs on same shard, good for analytics
+
+4. **Easy to add shards:** Just add new range, no data migration
+
+5. **Hash-based:** Good for random IDs, but resharding is expensive
+
+6. **Consistent hashing:** Good for distributed caches (Memcached), not for time-ordered data
+
+7. **For URL shortener:** Range-based with hotspot fix is optimal
+
+---
+
+### 🔗 Further Reading
+
+- **"Designing Data-Intensive Applications":** Chapter 6 (Partitioning)
+- **Instagram Engineering Blog:** How they shard billions of photos
+- **Discord Engineering Blog:** How they shard messages
+
+---
+
+### ✏️ Practice Exercise
+
+**Scenario:** You have 4 shards using range-based sharding:
+- Shard 1: IDs 0-1B
+- Shard 2: IDs 1B-2B
+- Shard 3: IDs 2B-3B
+- Shard 4: IDs 3B-4B
+
+Your system is growing and you need to add Shard 5.
+
+**Questions:**
+1. How do you add Shard 5 without downtime?
+2. Do you need to move any existing data?
+3. What's the routing logic after adding Shard 5?
+4. How does this compare to adding a shard with hash-based sharding?
+
+<details>
+<summary>Click to see answer</summary>
+
+**1. How to add Shard 5 without downtime:**
+
+```
+Step-by-step process:
+
+Step 1: Provision Shard 5
+  - Create new database instance: shard5-master
+  - Create replicas: shard5-replica1, shard5-replica2
+  - Set up replication between master and replicas
+  - Duration: 30 minutes
+
+Step 2: Update routing configuration
+  - Add Shard 5 to config: IDs 4B-5B
+  - Deploy updated config to all application instances
+  - Use rolling deployment (no downtime)
+  - Duration: 10 minutes
+
+Step 3: Verify
+  - Create test URL (should go to Shard 5 if ID > 4B)
+  - Monitor Shard 5 for incoming writes
+  - Check that Shards 1-4 unchanged
+
+Step 4: Monitor
+  - Track write distribution across all 5 shards
+  - Verify Shard 5 receiving expected traffic
+  
+Total time: 40 minutes
+Downtime: 0 seconds ✓
+```
+
+---
+
+**2. Do you need to move existing data?**
+
+```
+NO! ✓
+
+Current state:
+  Shard 1: IDs 0-1B (1B URLs, full)
+  Shard 2: IDs 1B-2B (1B URLs, full)
+  Shard 3: IDs 2B-3B (1B URLs, full)
+  Shard 4: IDs 3B-4B (currently 500M URLs, growing)
+
+After adding Shard 5:
+  Shard 1: IDs 0-1B (unchanged)
+  Shard 2: IDs 1B-2B (unchanged)
+  Shard 3: IDs 2B-3B (unchanged)
+  Shard 4: IDs 3B-4B (unchanged)
+  Shard 5: IDs 4B-5B (new URLs only)
+
+All existing data stays in place!
+Only NEW URLs (with IDs > 4B) go to Shard 5.
+
+This is the huge advantage of range-based sharding! ✓
+```
+
+---
+
+**3. Routing logic after adding Shard 5:**
+
+```
+Updated routing function:
+
+def get_shard(id):
+    # Extract datacenter and worker from Snowflake ID
+    datacenter_id = (id >> 17) & 0x1F
+    worker_id = (id >> 12) & 0x1F
+    
+    # Calculate base shard
+    shard_id = (datacenter_id * 32 + worker_id) % 5  # Changed from % 4 to % 5
+    
+    return shards[shard_id]
+
+Distribution with 5 shards:
+  DC 1, Worker 1: (1*32 + 1) % 5 = 33 % 5 = 3 → Shard 3
+  DC 1, Worker 2: (1*32 + 2) % 5 = 34 % 5 = 4 → Shard 4
+  DC 1, Worker 3: (1*32 + 3) % 5 = 35 % 5 = 0 → Shard 0
+  DC 1, Worker 4: (1*32 + 4) % 5 = 36 % 5 = 1 → Shard 1
+  DC 1, Worker 5: (1*32 + 5) % 5 = 37 % 5 = 2 → Shard 2
+
+All 5 shards receive writes evenly! ✓
+```
+
+---
+
+**4. Comparison with hash-based sharding:**
+
+```
+Hash-Based Sharding:
+
+Step 1: Provision Shard 5 (30 min)
+  Same as range-based
+
+Step 2: Calculate new hash distribution
+  Old: hash(id) % 4
+  New: hash(id) % 5
+  
+  Impact analysis:
+    ID 123: hash(123) % 4 = 3, hash(123) % 5 = 3 (same shard) ✓
+    ID 456: hash(456) % 4 = 0, hash(456) % 5 = 1 (different!) ✗
+    ID 789: hash(789) % 4 = 1, hash(789) % 5 = 4 (different!) ✗
+    
+  ~80% of IDs map to different shards!
+
+Step 3: Migrate data (CRITICAL DIFFERENCE)
+  For each of 4 billion URLs:
+    1. Read from old shard
+    2. Calculate new shard: hash(id) % 5
+    3. If different, write to new shard
+    4. Delete from old shard (after verification)
+  
+  Data to move: ~3.2 billion URLs (80%)
+  At 10,000 URLs/sec: 3,200,000,000 / 10,000 = 320,000 seconds = 89 hours!
+  
+Step 4: Update routing (10 min)
+  Can only update after ALL data migrated
+
+Step 5: Cleanup old data (10 hours)
+
+Total time: ~100 hours (4+ days)
+Downtime options:
+  Option A: Full downtime (4 days) ❌
+  Option B: Dual-write mode (complex, risky)
+  Option C: Read-only mode during migration (poor UX)
+
+Comparison:
+
+┌─────────────────┬──────────────────┬──────────────────┐
+│                 │  Range-Based     │  Hash-Based      │
+├─────────────────┼──────────────────┼──────────────────┤
+│ Data movement   │  0 URLs          │  3.2B URLs       │
+│                 │  (0%)            │  (80%)           │
+├─────────────────┼──────────────────┼──────────────────┤
+│ Time to add     │  40 minutes      │  100 hours       │
+│ shard           │                  │  (4+ days)       │
+├─────────────────┼──────────────────┼──────────────────┤
+│ Downtime        │  0 seconds       │  Hours to days   │
+├─────────────────┼──────────────────┼──────────────────┤
+│ Risk            │  Very low        │  High (data      │
+│                 │                  │  corruption      │
+│                 │                  │  possible)       │
+├─────────────────┼──────────────────┼──────────────────┤
+│ Complexity      │  Simple config   │  Complex data    │
+│                 │  update          │  migration       │
+└─────────────────┴──────────────────┴──────────────────┘
+
+Verdict: Range-based sharding is FAR superior for adding shards! ✓
+```
+
+---
+
+**Key insight:**
+
+Range-based sharding with time-ordered IDs is perfect for append-heavy workloads like URL shortener. New data naturally goes to new shards without touching old data.
+
+Hash-based sharding forces expensive reshuffling of existing data, making it impractical for large datasets.
+
+</details>
+
+---
+
+**Continuing to 4.4...**
 
