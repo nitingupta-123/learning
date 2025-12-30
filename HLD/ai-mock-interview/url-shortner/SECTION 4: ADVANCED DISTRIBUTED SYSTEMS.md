@@ -1923,5 +1923,1466 @@ Hash-based sharding forces expensive reshuffling of existing data, making it imp
 
 ---
 
-**Continuing to 4.4...**
+# **Continuing Section 4.3 → 4.4** 📝
 
+---
+
+## **4.4 Distributed Locks for Custom URLs**
+
+### 🤔 Interview Question/Context
+
+**Interviewer:** "Two users simultaneously try to create the custom URL 'google'. How do you prevent both from succeeding?"
+
+### ❌ Your Initial Answer
+
+You didn't consider the race condition in distributed systems with multiple service instances.
+
+---
+
+### ✅ Complete Answer
+
+#### **The Problem: Race Condition**
+
+**Scenario:**
+
+```
+Time: 14:30:00.000
+
+User A (in California) → Server 1 (US-EAST)
+User B (in New York)   → Server 2 (US-EAST)
+
+Both want custom slug: "google"
+```
+
+**What happens without proper synchronization:**
+
+```
+Timeline:
+
+14:30:00.000 - User A clicks "Create" with slug "google"
+14:30:00.000 - User B clicks "Create" with slug "google"
+
+14:30:00.100 - Server 1 receives request
+               Checks DB: "Is 'google' taken?"
+               Query: SELECT id FROM url_mappings WHERE custom_slug = 'google'
+               Result: No rows (available!)
+
+14:30:00.105 - Server 2 receives request
+               Checks DB: "Is 'google' taken?"
+               Query: SELECT id FROM url_mappings WHERE custom_slug = 'google'
+               Result: No rows (available!)
+               
+               ← RACE CONDITION! Both servers think "google" is available
+
+14:30:00.200 - Server 1 inserts:
+               INSERT INTO url_mappings (id, custom_slug, long_url)
+               VALUES (100, 'google', 'https://userA.com')
+               Result: Success! ✓
+
+14:30:00.210 - Server 2 inserts:
+               INSERT INTO url_mappings (id, custom_slug, long_url)
+               VALUES (101, 'google', 'https://userB.com')
+               Result: ???
+
+Outcome depends on database:
+  - With UNIQUE constraint: Server 2's insert FAILS (constraint violation)
+  - Without UNIQUE constraint: BOTH inserts succeed ❌
+    → Database now has TWO rows with slug "google"
+    → Undefined behavior when someone visits tiny.url/google
+```
+
+---
+
+### 🎯 URL Shortener Context
+
+#### **Solution 1: Database UNIQUE Constraint (SIMPLE)** ✅
+
+**The easiest solution:**
+
+```sql
+CREATE TABLE url_mappings (
+    id BIGINT PRIMARY KEY,
+    long_url VARCHAR(2048) NOT NULL,
+    custom_slug VARCHAR(50) UNIQUE,  -- Database enforces uniqueness
+    user_id BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- The UNIQUE constraint guarantees only ONE row can have a given slug
+```
+
+**How it works:**
+
+```
+Timeline with UNIQUE constraint:
+
+14:30:00.000 - User A and User B both click "Create" with "google"
+
+14:30:00.100 - Server 1 checks: "google" available ✓
+
+14:30:00.105 - Server 2 checks: "google" available ✓
+
+14:30:00.200 - Server 1 inserts:
+               INSERT INTO url_mappings (id, custom_slug, long_url, user_id)
+               VALUES (100, 'google', 'https://userA.com', 1)
+               
+               Database accepts insert ✓
+               Internally, database creates index entry: 'google' → row 100
+
+14:30:00.210 - Server 2 inserts:
+               INSERT INTO url_mappings (id, custom_slug, long_url, user_id)
+               VALUES (101, 'google', 'https://userB.com', 2)
+               
+               Database checks unique constraint:
+                 - Index already has 'google' → row 100
+                 - UNIQUE constraint violation!
+               
+               Database REJECTS insert with error:
+               ERROR: duplicate key value violates unique constraint "url_mappings_custom_slug_key"
+               DETAIL: Key (custom_slug)=(google) already exists.
+
+14:30:00.211 - Server 2 catches error, returns to User B:
+               HTTP 409 Conflict
+               {
+                 "error": "SLUG_TAKEN",
+                 "message": "Custom slug 'google' is already taken",
+                 "suggestion": "Try: google-1, google-2, google-ny"
+               }
+
+Result: Only User A got "google" ✓
+        User B notified it's taken ✓
+        No duplicate slugs in database ✓
+```
+
+---
+
+**Implementation:**
+
+```python
+def create_custom_url(long_url, custom_slug, user_id):
+    # Validate slug format
+    if not is_valid_slug(custom_slug):
+        return 400, {"error": "Invalid slug format"}
+    
+    # Generate Snowflake ID
+    url_id = generate_snowflake_id()
+    
+    # Try to insert
+    try:
+        db.execute("""
+            INSERT INTO url_mappings (id, long_url, custom_slug, user_id, created_at)
+            VALUES (?, ?, ?, ?, NOW())
+        """, url_id, long_url, custom_slug, user_id)
+        
+        # Success!
+        return 201, {
+            "shortUrl": f"https://tiny.url/{custom_slug}",
+            "longUrl": long_url
+        }
+        
+    except UniqueConstraintViolation as e:
+        # Slug already taken
+        # Suggest alternatives
+        suggestions = generate_suggestions(custom_slug)
+        
+        return 409, {
+            "error": "SLUG_TAKEN",
+            "message": f"Custom slug '{custom_slug}' is already taken",
+            "suggestions": suggestions
+        }
+    
+    except Exception as e:
+        # Other database error
+        log.error(f"Database error: {e}")
+        return 500, {"error": "Internal server error"}
+```
+
+**Generating suggestions:**
+
+```python
+def generate_suggestions(slug):
+    """Generate alternative slug suggestions"""
+    suggestions = []
+    
+    # Try with numbers
+    for i in range(1, 6):
+        candidate = f"{slug}-{i}"
+        if is_slug_available(candidate):
+            suggestions.append(candidate)
+            if len(suggestions) >= 3:
+                break
+    
+    # Try with year
+    year = datetime.now().year
+    candidate = f"{slug}-{year}"
+    if is_slug_available(candidate):
+        suggestions.append(candidate)
+    
+    # Try with random suffix
+    import random
+    random_suffix = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=3))
+    candidate = f"{slug}-{random_suffix}"
+    if is_slug_available(candidate):
+        suggestions.append(candidate)
+    
+    return suggestions[:3]  # Return top 3 suggestions
+
+# Example output:
+# generate_suggestions("google")
+# → ["google-1", "google-2025", "google-xyz"]
+```
+
+---
+
+**Pros of UNIQUE Constraint:**
+
+```
+✓ Simple - just add UNIQUE to schema
+✓ Database guarantees - can't be bypassed by application bugs
+✓ No additional infrastructure needed (no Redis locks)
+✓ Works perfectly for our use case
+✓ Atomic - database handles race condition automatically
+✓ Low latency - no network round-trip to lock service
+```
+
+**Cons:**
+
+```
+✗ Can't do complex validation before insert
+  Example: If you want to check profanity, reserve premium slugs,
+  or apply custom business logic BEFORE inserting
+  
+  With UNIQUE constraint alone:
+    1. Insert attempt
+    2. Fails if taken
+    3. Can't run custom logic between check and insert
+```
+
+---
+
+#### **Solution 2: Distributed Lock with Redis (COMPLEX)** ⚠️
+
+**When you need it:**
+
+```
+Use distributed locks if you need to:
+  1. Run complex validation BEFORE inserting
+  2. Check multiple conditions atomically
+  3. Reserve resources across multiple tables
+  4. Implement "soft" reservations (hold slug for 5 minutes while user fills form)
+
+Example scenario:
+  User starts creating URL with "google" slug
+  → Show "google is available (reserved for you for 5 minutes)"
+  → User fills in long URL, description, etc.
+  → After 5 minutes, release reservation if not completed
+  
+This requires distributed locks because:
+  - Need to "hold" slug across multiple requests
+  - UNIQUE constraint alone can't do temporary reservations
+```
+
+---
+
+**How distributed locks work:**
+
+```
+Concept: Only ONE server can hold the lock for a given slug at a time
+
+Lock properties:
+  1. Exclusive - only one holder at a time
+  2. Timeout - automatically released after N seconds (prevents deadlock)
+  3. Atomic acquire - guaranteed no race condition
+  4. Token-based release - only lock owner can release
+```
+
+---
+
+**Redis-based lock implementation:**
+
+```python
+import redis
+import uuid
+
+redis_client = redis.Redis(host='redis.internal', port=6379)
+
+def create_custom_url_with_lock(long_url, custom_slug, user_id):
+    lock_key = f"lock:slug:{custom_slug}"
+    lock_value = str(uuid.uuid4())  # Unique token for this lock
+    lock_timeout = 5  # seconds
+    
+    # Step 1: Try to acquire lock
+    acquired = redis_client.set(
+        lock_key,
+        lock_value,
+        nx=True,     # Only set if key doesn't exist (atomic)
+        ex=lock_timeout  # Expire after 5 seconds (auto-release)
+    )
+    
+    if not acquired:
+        # Someone else is creating this slug right now
+        return 429, {
+            "error": "SLUG_LOCKED",
+            "message": "Someone is currently creating this slug, try again in a moment"
+        }
+    
+    try:
+        # Step 2: Inside lock - do validation
+        
+        # Check profanity
+        if contains_profanity(custom_slug):
+            return 400, {"error": "Slug contains inappropriate content"}
+        
+        # Check if it's a premium slug (requires payment)
+        if is_premium_slug(custom_slug) and not user_is_premium(user_id):
+            return 403, {"error": "This is a premium slug. Upgrade to use it."}
+        
+        # Check database (even though we have lock, verify it's available)
+        existing = db.query(
+            "SELECT id FROM url_mappings WHERE custom_slug = ?",
+            custom_slug
+        )
+        
+        if existing:
+            # Taken (shouldn't happen if lock is working, but defensive check)
+            return 409, {"error": "Slug already taken"}
+        
+        # Step 3: All checks passed, insert
+        url_id = generate_snowflake_id()
+        
+        db.execute("""
+            INSERT INTO url_mappings (id, long_url, custom_slug, user_id, created_at)
+            VALUES (?, ?, ?, ?, NOW())
+        """, url_id, long_url, custom_slug, user_id)
+        
+        # Step 4: Success!
+        return 201, {
+            "shortUrl": f"https://tiny.url/{custom_slug}",
+            "longUrl": long_url
+        }
+        
+    finally:
+        # Step 5: Release lock (IMPORTANT!)
+        # Only release if we still own it (check token matches)
+        release_lock(lock_key, lock_value)
+
+
+def release_lock(lock_key, lock_value):
+    """Safely release lock only if we own it"""
+    
+    # Lua script for atomic check-and-delete
+    lua_script = """
+    if redis.call('get', KEYS[1]) == ARGV[1] then
+        return redis.call('del', KEYS[1])
+    else
+        return 0
+    end
+    """
+    
+    # Execute Lua script atomically
+    redis_client.eval(lua_script, 1, lock_key, lock_value)
+    
+    # Why Lua script?
+    # Without Lua:
+    #   1. GET lock_key
+    #   2. Compare with lock_value
+    #   3. If match, DELETE lock_key
+    # Problem: Steps 1-3 not atomic! Another process could acquire lock between step 2 and 3
+    #
+    # With Lua:
+    #   All steps execute atomically on Redis server
+    #   No race condition possible ✓
+```
+
+---
+
+**Timeline with distributed lock:**
+
+```
+14:30:00.000 - User A and User B both request "google"
+
+14:30:00.100 - Server 1: Try acquire lock("google")
+               Redis: SET lock:slug:google "uuid-1" NX EX 5
+               Redis: OK (lock acquired) ✓
+               
+               Server 1 now holds lock for 5 seconds
+
+14:30:00.105 - Server 2: Try acquire lock("google")
+               Redis: SET lock:slug:google "uuid-2" NX EX 5
+               Redis: nil (key already exists, lock NOT acquired) ✗
+               
+               Server 2 returns: 429 "Someone is creating this slug"
+
+14:30:00.200 - Server 1: Inside lock
+               - Check profanity ✓
+               - Check premium status ✓
+               - Check database ✓
+               - Insert to database ✓
+
+14:30:00.250 - Server 1: Release lock
+               Redis: DEL lock:slug:google (if owner matches)
+               Lock released ✓
+
+Result: Only Server 1 succeeded ✓
+        Server 2 was blocked by lock ✓
+        User B told to try again ✓
+```
+
+---
+
+**Handling lock timeout (edge case):**
+
+```
+Scenario: Server crashes while holding lock
+
+14:30:00.000 - Server 1 acquires lock("google") with 5 second timeout
+
+14:30:00.500 - Server 1 crashes! (power failure, network issue, etc.)
+               Lock NOT released (finally block didn't execute)
+
+Without timeout:
+  Lock held forever ❌
+  "google" slug permanently locked
+  No one can ever create it
+
+With timeout (5 seconds):
+  14:30:05.000 - Redis automatically deletes lock key (expired)
+  14:30:05.001 - Server 2 can now acquire lock ✓
+  
+  Deadlock prevented! ✓
+
+Lesson: Always set expiration on locks to handle crashes
+```
+
+---
+
+**Pros of Distributed Locks:**
+
+```
+✓ Enables complex validation logic before insert
+✓ Can implement "soft" reservations (hold for N minutes)
+✓ Multiple checks can be atomic
+✓ Prevents wasted database operations
+```
+
+**Cons:**
+
+```
+✗ More complex code (acquire, try-finally, release)
+✗ Additional infrastructure (Redis for locks)
+✗ Higher latency (+2-5ms for lock acquire/release)
+✗ Potential deadlocks if not careful with timeouts
+✗ Harder to debug (distributed systems issues)
+```
+
+---
+
+#### **Solution 3: Optimistic Locking (Alternative)**
+
+**Concept:**
+
+```
+Don't lock upfront. Instead:
+  1. Read current state (with version number)
+  2. Do processing
+  3. Try to update only if version hasn't changed
+
+Similar to how version control (Git) handles conflicts
+```
+
+**Implementation:**
+
+```sql
+-- Add version column
+ALTER TABLE url_mappings ADD COLUMN version INT DEFAULT 1;
+
+-- Reserve slug (optimistic)
+UPDATE url_mappings
+SET version = version + 1, reserved_by = ?, reserved_at = NOW()
+WHERE custom_slug = ? AND reserved_by IS NULL AND version = ?
+
+-- If 0 rows updated → someone else reserved it first (conflict)
+-- If 1 row updated → we successfully reserved it
+```
+
+**This is less common for URL shortener but useful in other scenarios.**
+
+---
+
+### 📊 Key Takeaways
+
+1. **Race conditions are real** in distributed systems with multiple service instances
+
+2. **UNIQUE constraint is simplest** solution for custom URLs - use this! ✓
+
+3. **Distributed locks needed** only for complex multi-step validation
+
+4. **Always use lock timeouts** to prevent deadlocks (5-10 seconds typical)
+
+5. **Lua scripts in Redis** ensure atomic check-and-release of locks
+
+6. **For URL shortener:** UNIQUE constraint sufficient for 95% of cases
+
+7. **Add locks later** only if business requirements demand complex validation
+
+---
+
+### 🔗 Further Reading
+
+- **Redis documentation:** Distributed locks with Redlock algorithm
+- **"Designing Data-Intensive Applications":** Chapter on distributed systems guarantees
+- **Martin Kleppmann:** "How to do distributed locking" (blog post critique of Redlock)
+
+---
+
+### ✏️ Practice Exercise
+
+**Scenario:** Your product team wants a new feature:
+
+"Premium users can reserve a custom slug for 10 minutes while they decide on the long URL. After 10 minutes, if they haven't completed, release the slug for others."
+
+**Questions:**
+1. Can you implement this with just a UNIQUE constraint?
+2. If not, what additional mechanism do you need?
+3. How do you clean up expired reservations?
+4. What happens if a user reserves "google", doesn't complete, and someone else tries "google" after 5 minutes?
+
+<details>
+<summary>Click to see answer</summary>
+
+**1. Can you implement with just UNIQUE constraint?**
+
+```
+NO ✗
+
+UNIQUE constraint only prevents duplicate final slugs.
+It can't handle temporary "soft" reservations.
+
+Problem with UNIQUE alone:
+  - Can't INSERT incomplete URLs (missing long_url)
+  - Can't partially fill a row then complete later
+  - Can't automatically release after timeout
+
+Need additional mechanism for reservations.
+```
+
+---
+
+**2. What mechanism do you need?**
+
+**Option A: Separate reservations table**
+
+```sql
+CREATE TABLE slug_reservations (
+    custom_slug VARCHAR(50) PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    reserved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    INDEX idx_expires_at (expires_at)
+);
+
+Flow:
+  1. User clicks "Reserve 'google'"
+  2. INSERT INTO slug_reservations:
+       slug='google', user_id=123, expires_at=NOW() + 10 minutes
+  3. User has 10 minutes to complete
+  4. When completing:
+     - Check reservation still valid (expires_at > NOW AND user_id matches)
+     - If valid: INSERT into url_mappings, DELETE from slug_reservations
+     - If expired: Return error "Reservation expired"
+
+Cleanup job (runs every minute):
+  DELETE FROM slug_reservations WHERE expires_at < NOW()
+```
+
+---
+
+**Option B: Redis-based reservations**
+
+```python
+def reserve_slug(custom_slug, user_id):
+    reservation_key = f"reservation:slug:{custom_slug}"
+    reservation_data = {
+        "user_id": user_id,
+        "reserved_at": time.time()
+    }
+    
+    # Try to reserve for 10 minutes (600 seconds)
+    success = redis_client.set(
+        reservation_key,
+        json.dumps(reservation_data),
+        nx=True,    # Only if not exists
+        ex=600      # Expire after 10 minutes
+    )
+    
+    if success:
+        return 200, {
+            "message": "Slug reserved for 10 minutes",
+            "expires_at": time.time() + 600
+        }
+    else:
+        # Check if someone else reserved it
+        existing = redis_client.get(reservation_key)
+        if existing:
+            data = json.loads(existing)
+            return 409, {
+                "error": "Slug reserved by another user",
+                "expires_in_seconds": redis_client.ttl(reservation_key)
+            }
+
+def complete_reservation(custom_slug, long_url, user_id):
+    reservation_key = f"reservation:slug:{custom_slug}"
+    
+    # Check reservation
+    reservation = redis_client.get(reservation_key)
+    if not reservation:
+        return 400, {"error": "No reservation found or reservation expired"}
+    
+    data = json.loads(reservation)
+    if data["user_id"] != user_id:
+        return 403, {"error": "This slug is reserved by another user"}
+    
+    # Reservation valid! Create URL
+    url_id = generate_snowflake_id()
+    
+    try:
+        db.execute("""
+            INSERT INTO url_mappings (id, long_url, custom_slug, user_id)
+            VALUES (?, ?, ?, ?)
+        """, url_id, long_url, custom_slug, user_id)
+        
+        # Delete reservation
+        redis_client.delete(reservation_key)
+        
+        return 201, {"shortUrl": f"https://tiny.url/{custom_slug}"}
+        
+    except UniqueConstraintViolation:
+        # Shouldn't happen (we had reservation), but defensive
+        return 409, {"error": "Slug taken"}
+```
+
+**Pros of Redis approach:**
+- ✓ Automatic expiration (Redis TTL handles cleanup)
+- ✓ Fast (in-memory)
+- ✓ No cleanup job needed
+
+**Pros of database approach:**
+- ✓ Persistent (survives Redis crash)
+- ✓ Can query reservations (analytics, debugging)
+- ✓ ACID guarantees
+
+**Recommended: Redis for simplicity** ✓
+
+---
+
+**3. Cleanup of expired reservations:**
+
+**Redis approach:**
+```
+No cleanup needed! ✓
+Redis automatically deletes keys after TTL expires (600 seconds)
+
+Monitoring:
+  - Track: reservation:* key count
+  - Alert if > 10,000 (possible abuse)
+```
+
+**Database approach:**
+```
+Cron job (runs every minute):
+
+#!/bin/bash
+# cleanup-expired-reservations.sh
+
+psql -h db-master -U app -d urlshortener -c "
+  DELETE FROM slug_reservations 
+  WHERE expires_at < NOW()
+"
+
+Metrics to track:
+  - Reservations deleted per run
+  - Average reservation age
+  - Completion rate (reservations that become actual URLs)
+
+Dashboard:
+  Total reservations: 523
+  Completed: 312 (60%)
+  Expired: 211 (40%)
+  → Indicates 40% of users abandon after reserving
+  → Consider shorter timeout (5 min instead of 10 min)
+```
+
+---
+
+**4. Scenario: User A reserves, User B tries after 5 minutes**
+
+```
+Timeline:
+
+14:00:00 - User A reserves "google"
+           Redis: SET reservation:slug:google {"user_id": 123, ...} EX 600
+           Response: "Reserved for 10 minutes"
+
+14:05:00 - User B tries to reserve "google" (5 minutes later)
+           Redis: SET reservation:slug:google {"user_id": 456, ...} NX EX 600
+           Redis: nil (key exists, reservation active)
+           
+           Check remaining time:
+           Redis: TTL reservation:slug:google
+           Redis: 300 (5 minutes = 300 seconds remaining)
+           
+           Response to User B:
+           HTTP 409 Conflict
+           {
+             "error": "SLUG_RESERVED",
+             "message": "This slug is reserved by another user",
+             "expires_in_seconds": 300,
+             "suggestion": "Try again in 5 minutes, or try: google-1, google-ny"
+           }
+
+14:10:00 - Redis automatically deletes reservation key (TTL expired)
+
+14:10:01 - User B tries again
+           Redis: SET reservation:slug:google {"user_id": 456, ...} NX EX 600
+           Redis: OK (key doesn't exist, reservation succeeds) ✓
+           
+           Response: "Reserved for 10 minutes"
+
+Result: User A had priority for 10 minutes
+        After expiration, User B could reserve
+        No conflicts, fair ordering ✓
+```
+
+---
+
+**Edge case: What if User A completes AFTER expiration?**
+
+```
+14:00:00 - User A reserves "google" (expires at 14:10:00)
+14:10:00 - Reservation expires automatically
+14:10:01 - User B reserves "google"
+14:11:00 - User A finally completes (11 minutes later, SLOW!)
+
+User A's completion attempt:
+
+def complete_reservation(custom_slug, long_url, user_id):
+    reservation_key = f"reservation:slug:{custom_slug}"
+    
+    reservation = redis_client.get(reservation_key)
+    if not reservation:
+        # Reservation not found (expired!)
+        return 400, {
+            "error": "RESERVATION_EXPIRED",
+            "message": "Your reservation expired after 10 minutes",
+            "suggestion": "Try reserving again if the slug is still available"
+        }
+    
+    # Continue only if reservation valid...
+
+Response to User A:
+  HTTP 400 Bad Request
+  "Your reservation expired. Slug may have been taken by someone else."
+
+User A must reserve again (if still available)
+This is fair - they had 10 minutes ✓
+```
+
+---
+
+**Summary:**
+
+Feature requires:
+1. ✓ Redis-based reservations (simple, automatic expiration)
+2. ✓ TTL of 600 seconds (10 minutes)
+3. ✓ Check reservation ownership before completing
+4. ✓ No cleanup needed (Redis handles it)
+5. ✓ Handle edge case of expired reservations gracefully
+
+Cost: Minimal (few thousand reservations = <1 MB Redis memory)
+Complexity: Medium (more complex than simple UNIQUE constraint, but manageable)
+
+</details>
+
+---
+
+# **SECTION 4.5: SNOWFLAKE ID GENERATION** ❄️
+
+---
+
+## **4.5 Snowflake ID Generation Details**
+
+### 🤔 Interview Question/Context
+
+**Interviewer:** "You mentioned using Snowflake IDs. Can you explain how they work and why they're better than database auto-increment?"
+
+---
+
+### ✅ Complete Answer
+
+#### **What is Snowflake ID?**
+
+```
+A 64-bit unique identifier that can be generated independently 
+by multiple servers without coordination.
+
+Invented by Twitter for their distributed systems.
+
+Key property: Time-ordered (newer IDs numerically greater than older IDs)
+```
+
+---
+
+#### **64-Bit Structure Breakdown:**
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                    64 bits total                          │
+├─────────────────┬──────────┬──────────┬──────────────────┤
+│  41 bits        │ 10 bits  │ 10 bits  │    12 bits       │
+│  Timestamp      │Datacenter│ Worker   │   Sequence       │
+└─────────────────┴──────────┴──────────┴──────────────────┘
+
+Example ID: 1234567890123456789
+
+Breakdown:
+  Timestamp (41 bits): 
+    - Milliseconds since custom epoch (e.g., Jan 1, 2020)
+    - Supports 69 years of IDs (2^41 milliseconds)
+  
+  Datacenter ID (10 bits):
+    - Identifies which datacenter generated the ID
+    - Supports 1024 datacenters (2^10)
+  
+  Worker ID (10 bits):
+    - Identifies which server/process in datacenter
+    - Supports 1024 workers per datacenter (2^10)
+  
+  Sequence (12 bits):
+    - Counter within same millisecond
+    - Supports 4096 IDs per millisecond per worker (2^12)
+```
+
+---
+
+#### **How It Works:**
+
+```
+Each server independently generates IDs:
+
+Server configuration:
+  datacenter_id = 1
+  worker_id = 5
+  custom_epoch = 1609459200000  // Jan 1, 2020 in milliseconds
+
+ID generation algorithm:
+  1. Get current timestamp: now() - custom_epoch
+     Example: 1638360000 milliseconds since epoch
+  
+  2. If same millisecond as last ID:
+     - Increment sequence: 0 → 1 → 2 → 3...
+     - If sequence reaches 4096 → wait for next millisecond
+  
+  3. If new millisecond:
+     - Reset sequence to 0
+  
+  4. Build 64-bit ID:
+     ID = (timestamp << 22) | (datacenter_id << 12) | (worker_id << 2) | sequence
+  
+  5. Return ID
+
+Example:
+  Timestamp: 1638360000 (41 bits)
+  Datacenter: 1 (10 bits)
+  Worker: 5 (10 bits)
+  Sequence: 123 (12 bits)
+  
+  Final ID: 6891234567890123
+```
+
+---
+
+#### **Why Time-Ordered IDs Matter:**
+
+```
+Benefit 1: Database Index Efficiency
+  Sequential IDs → efficient B-tree inserts
+  Random IDs → B-tree rebalancing → slower
+
+Benefit 2: Sharding by Time
+  Shard 1: IDs 0-1B (Jan-Jun 2024)
+  Shard 2: IDs 1B-2B (Jul-Dec 2024)
+  Shard 3: IDs 2B-3B (Jan-Jun 2025)
+  
+  Recent URLs naturally group together
+
+Benefit 3: Sorting
+  ORDER BY id = ORDER BY created_at
+  No separate timestamp column needed for sorting
+
+Benefit 4: Analytics
+  "URLs created last week" → simple ID range query
+  SELECT * FROM urls WHERE id BETWEEN X AND Y
+```
+
+---
+
+### 🎯 URL Shortener Context
+
+#### **Worker ID Assignment Strategies:**
+
+**Option 1: Environment Variable (Simple)**
+
+```bash
+# Docker/Kubernetes configuration
+apiVersion: v1
+kind: Deployment
+metadata:
+  name: urlshortener
+spec:
+  replicas: 10
+  template:
+    spec:
+      containers:
+      - name: service
+        env:
+        - name: DATACENTER_ID
+          value: "1"
+        - name: WORKER_ID
+          value: "5"  # Manually assigned per instance
+```
+
+**Pros:**
+- ✅ Simple to understand
+- ✅ Full control over IDs
+
+**Cons:**
+- ❌ Manual assignment required
+- ❌ Risk of duplicate IDs if misconfigured
+
+---
+
+**Option 2: Service Discovery (Advanced)**
+
+```
+Use ZooKeeper/etcd to auto-assign worker IDs:
+
+Startup sequence:
+  1. Service starts
+  2. Connects to ZooKeeper
+  3. Requests: "Give me unique worker ID for datacenter 1"
+  4. ZooKeeper assigns: worker_id = 7 (next available)
+  5. Service registers: "I am datacenter=1, worker=7"
+  6. On shutdown: Release worker_id=7 for reuse
+
+Benefits:
+  ✅ Automatic assignment (no manual config)
+  ✅ No duplicate IDs
+  ✅ Worker IDs recycled when servers shut down
+```
+
+---
+
+**Option 3: Use IP Address (Hacky but works)**
+
+```python
+# Extract last octet of IP as worker ID
+import socket
+
+def get_worker_id():
+    hostname = socket.gethostname()
+    ip = socket.gethostbyname(hostname)
+    # IP: 192.168.1.42
+    last_octet = int(ip.split('.')[-1])  # 42
+    worker_id = last_octet % 1024  # Ensure within 10 bits
+    return worker_id
+
+# Works if you have <1024 servers and IPs don't repeat
+```
+
+**Pros:**
+- ✅ Zero configuration
+
+**Cons:**
+- ❌ Doesn't work with DHCP
+- ❌ Doesn't work with >1024 servers
+
+---
+
+#### **Handling Edge Cases:**
+
+**Case 1: Clock Skew (Clock Goes Backward)**
+
+```
+Problem:
+  Server clock: 10:00:00
+  Generate ID with timestamp: 10:00:00
+  
+  Clock adjusted backward (NTP sync):
+  Server clock: 09:59:50
+  
+  Next ID would have OLDER timestamp than previous ID!
+  Violates time-ordering guarantee ❌
+
+Solution:
+  Track last_timestamp
+  
+  if current_timestamp < last_timestamp:
+      // Clock went backward!
+      log.error("Clock moved backwards. Refusing to generate IDs.")
+      throw ClockBackwardsException
+      // Wait for clock to catch up
+  
+  Alternative (less strict):
+      // Wait until clock catches up to last_timestamp
+      while current_timestamp <= last_timestamp:
+          sleep(1 millisecond)
+      
+      // Now safe to generate with new timestamp
+```
+
+**Prevention:**
+- Use NTP with gradual clock adjustment (not jumps)
+- Monitor clock drift and alert
+- Use monotonic clocks if available
+
+---
+
+**Case 2: Sequence Overflow**
+
+```
+Problem:
+  In same millisecond, generated 4096 IDs (sequence maxed out)
+  Need to generate 4097th ID in same millisecond
+  
+Solution:
+  if sequence >= 4096:
+      // Sequence overflow
+      // Wait for next millisecond
+      while current_timestamp == last_timestamp:
+          current_timestamp = get_current_time()
+      
+      // New millisecond, reset sequence
+      sequence = 0
+      last_timestamp = current_timestamp
+  
+  generate_id(current_timestamp, datacenter, worker, sequence)
+```
+
+**In practice:**
+- 4096 IDs/millisecond = 4 million IDs/second per worker
+- We generate 40 IDs/second across all workers
+- Sequence overflow NEVER happens at our scale ✓
+
+---
+
+**Case 3: Duplicate Worker IDs**
+
+```
+Problem:
+  Server 1: datacenter=1, worker=5
+  Server 2: datacenter=1, worker=5  (misconfigured!)
+  
+  Both generate IDs with same datacenter+worker
+  → Collision possible! ❌
+
+Detection:
+  Monitor: Count unique IDs generated by each server
+  If two servers produce same ID → Alert immediately
+
+Prevention:
+  - Use service discovery (ZooKeeper auto-assigns)
+  - OR: Startup health check queries other servers for their worker IDs
+  - Refuse to start if duplicate detected
+```
+
+---
+
+#### **Capacity Calculation:**
+
+```
+Per worker capacity:
+  4096 IDs per millisecond
+  × 1000 milliseconds per second
+  = 4,096,000 IDs per second per worker
+
+Total system capacity:
+  1024 datacenters × 1024 workers × 4M IDs/sec
+  = 4.3 trillion IDs per second
+
+Our usage:
+  40 IDs per second across entire system
+  
+Headroom: 4.3 trillion / 40 = 107 billion times our current load ✓
+
+Runway with Snowflake:
+  69 years (2^41 milliseconds)
+  At 100M URLs/month: 69 years of capacity ✓
+```
+
+---
+
+#### **Implementation Pseudocode:**
+
+```python
+class SnowflakeIDGenerator:
+    def __init__(self, datacenter_id, worker_id, custom_epoch):
+        self.datacenter_id = datacenter_id  # 0-1023
+        self.worker_id = worker_id          # 0-1023
+        self.custom_epoch = custom_epoch    # Milliseconds
+        self.sequence = 0
+        self.last_timestamp = -1
+    
+    def generate_id(self):
+        timestamp = self._current_timestamp()
+        
+        # Handle clock going backwards
+        if timestamp < self.last_timestamp:
+            raise Exception(f"Clock moved backwards. Refusing to generate ID.")
+        
+        # Same millisecond as last ID
+        if timestamp == self.last_timestamp:
+            # Increment sequence
+            self.sequence = (self.sequence + 1) & 4095  # 12 bits max
+            
+            # Sequence overflow - wait for next millisecond
+            if self.sequence == 0:
+                timestamp = self._wait_next_millisecond(self.last_timestamp)
+        else:
+            # New millisecond - reset sequence
+            self.sequence = 0
+        
+        self.last_timestamp = timestamp
+        
+        # Build 64-bit ID
+        id = ((timestamp - self.custom_epoch) << 22) | \
+             (self.datacenter_id << 12) | \
+             (self.worker_id << 2) | \
+             self.sequence
+        
+        return id
+    
+    def _current_timestamp(self):
+        return int(time.time() * 1000)  # Milliseconds since epoch
+    
+    def _wait_next_millisecond(self, last_timestamp):
+        timestamp = self._current_timestamp()
+        while timestamp <= last_timestamp:
+            timestamp = self._current_timestamp()
+        return timestamp
+
+# Usage
+generator = SnowflakeIDGenerator(
+    datacenter_id=1,
+    worker_id=5,
+    custom_epoch=1609459200000  # Jan 1, 2020
+)
+
+url_id = generator.generate_id()
+# Example: 6891234567890123
+```
+
+---
+
+#### **Decoding Snowflake IDs:**
+
+```python
+def decode_snowflake(id, custom_epoch):
+    """
+    Extract components from Snowflake ID
+    """
+    # Sequence (last 12 bits)
+    sequence = id & 4095
+    
+    # Worker ID (next 10 bits)
+    worker_id = (id >> 12) & 1023
+    
+    # Datacenter ID (next 10 bits)
+    datacenter_id = (id >> 22) & 1023
+    
+    # Timestamp (first 41 bits)
+    timestamp = (id >> 32) + custom_epoch
+    created_at = datetime.fromtimestamp(timestamp / 1000)
+    
+    return {
+        'id': id,
+        'timestamp': timestamp,
+        'created_at': created_at,
+        'datacenter': datacenter_id,
+        'worker': worker_id,
+        'sequence': sequence
+    }
+
+# Example
+result = decode_snowflake(6891234567890123, 1609459200000)
+print(result)
+# {
+#   'id': 6891234567890123,
+#   'timestamp': 1638360000,
+#   'created_at': '2021-12-01 10:00:00',
+#   'datacenter': 1,
+#   'worker': 5,
+#   'sequence': 123
+# }
+```
+
+**Use cases for decoding:**
+- Debugging (which server generated this ID?)
+- Analytics (when was this URL created?)
+- Sharding (route to shard based on datacenter)
+
+---
+
+### **Snowflake vs Auto-Increment Comparison:**
+
+```
+┌──────────────────────┬─────────────────┬─────────────────┐
+│      Feature         │ Auto-increment  │   Snowflake     │
+├──────────────────────┼─────────────────┼─────────────────┤
+│ Coordination needed  │ Yes (DB hit)    │ No              │
+├──────────────────────┼─────────────────┼─────────────────┤
+│ Single point of      │ Yes (DB master) │ No              │
+│ failure              │                 │                 │
+├──────────────────────┼─────────────────┼─────────────────┤
+│ Performance          │ Limited by DB   │ 4M IDs/sec per  │
+│                      │ (~10K IDs/sec)  │ worker          │
+├──────────────────────┼─────────────────┼─────────────────┤
+│ Time-ordered         │ Yes (implicit)  │ Yes (explicit)  │
+├──────────────────────┼─────────────────┼─────────────────┤
+│ Multi-region         │ Difficult       │ Easy (different │
+│                      │ (conflicts)     │ datacenter IDs) │
+├──────────────────────┼─────────────────┼─────────────────┤
+│ Can generate offline │ No              │ Yes             │
+├──────────────────────┼─────────────────┼─────────────────┤
+│ Sortable by time     │ No (need        │ Yes (ID itself) │
+│                      │ timestamp col)  │                 │
+├──────────────────────┼─────────────────┼─────────────────┤
+│ Best for             │ Single-region,  │ Distributed,    │
+│                      │ low scale       │ high scale      │
+└──────────────────────┴─────────────────┴─────────────────┘
+```
+
+---
+
+### **Why Snowflake for URL Shortener:**
+
+```
+Benefit 1: No DB hit for ID generation
+  Auto-increment: Must query DB for next ID
+  Snowflake: Generate locally (instant)
+  
+  Performance: 0.01ms (Snowflake) vs 10ms (DB query)
+
+Benefit 2: Multi-region support
+  US-EAST: datacenter_id = 1
+  EU-WEST: datacenter_id = 2
+  
+  No coordination needed between regions
+  No ID conflicts possible
+
+Benefit 3: Sharding-friendly
+  Shard by ID range (time-ordered)
+  Recent URLs naturally group together
+  Analytics queries efficient
+
+Benefit 4: High throughput
+  Can generate 4M IDs/sec per server
+  Our load: 40 IDs/sec
+  Headroom: 100,000× ✓
+
+Benefit 5: Debugging
+  Can decode ID to see which server generated it and when
+  Useful for troubleshooting
+```
+
+---
+
+### 📊 Key Takeaways
+
+1. **64-bit structure:** [timestamp][datacenter][worker][sequence]
+
+2. **No coordination:** Each server generates independently
+
+3. **Time-ordered:** Newer IDs > older IDs (useful for sharding)
+
+4. **High capacity:** 4M IDs/sec per worker (way more than needed)
+
+5. **Multi-region safe:** Different datacenter IDs prevent collisions
+
+6. **Handle clock skew:** Refuse to generate if clock goes backward
+
+7. **Worker ID assignment:** Environment variable OR service discovery
+
+---
+
+### 🔗 Further Reading
+
+- **Twitter Engineering Blog:** "Announcing Snowflake" (original post)
+- **Snowflake ID visualization:** Understanding the bit layout
+- **Instagram's approach:** Similar but different bit allocation
+
+---
+
+### ✏️ Practice Exercise
+
+**Scenario:** You have 3 datacenters (US, EU, Asia), each with 100 servers.
+
+**Questions:**
+1. How would you assign datacenter IDs and worker IDs?
+2. What's your total ID generation capacity?
+3. One datacenter's clocks are 5 seconds behind. What happens?
+
+<details>
+<summary>Click to see answer</summary>
+
+**1. Datacenter and Worker ID assignment:**
+
+```
+Datacenter IDs:
+  US:   datacenter_id = 0
+  EU:   datacenter_id = 1
+  Asia: datacenter_id = 2
+
+Worker IDs within each datacenter:
+  Server 1: worker_id = 0
+  Server 2: worker_id = 1
+  ...
+  Server 100: worker_id = 99
+
+Total unique combinations:
+  3 datacenters × 100 workers = 300 unique worker identities
+
+Configuration example (US, Server 5):
+  DATACENTER_ID=0
+  WORKER_ID=4
+```
+
+---
+
+**2. Total ID generation capacity:**
+
+```
+Per worker capacity:
+  4096 IDs/millisecond × 1000 milliseconds/second
+  = 4,096,000 IDs per second
+
+Total workers:
+  3 datacenters × 100 workers = 300 workers
+
+Total system capacity:
+  300 workers × 4,096,000 IDs/sec
+  = 1,228,800,000 IDs per second
+  = ~1.2 billion IDs per second
+
+With our load (40 IDs/sec):
+  Headroom: 1.2 billion / 40 = 30 million times our current load
+  
+Conclusion: Massively over-provisioned ✓
+```
+
+---
+
+**3. Clock 5 seconds behind in one datacenter:**
+
+```
+Scenario:
+  US datacenter:   Clock shows 10:00:05
+  EU datacenter:   Clock shows 10:00:00 (5 seconds behind)
+  Asia datacenter: Clock shows 10:00:05
+
+What happens:
+
+For EU datacenter servers:
+  - Generate IDs with timestamp for 10:00:00
+  - Meanwhile, US/Asia generate IDs with timestamp 10:00:05
+  
+  EU generates:  6891234567890000 (timestamp: 10:00:00)
+  US generates:  6891234572890000 (timestamp: 10:00:05)
+  
+  US IDs are numerically LARGER than EU IDs
+
+Impact:
+
+1. Uniqueness: STILL GUARANTEED ✓
+   - Different datacenter IDs prevent collision
+   - EU (datacenter=1), US (datacenter=0) → different IDs
+
+2. Time-ordering: GLOBALLY BROKEN ❌
+   - EU ID looks "older" than it actually is
+   - But within same datacenter, ordering still works
+   
+3. Sharding: SLIGHTLY AFFECTED
+   - If sharding by ID range, EU IDs go to "older" shard
+   - Not a major problem, just slightly inefficient
+
+4. Analytics: SLIGHTLY INCORRECT
+   - EU URLs appear 5 seconds older in analytics
+   - Usually not a big deal (5 sec error in hours/days of data)
+
+Detection & Fix:
+
+1. Monitor clock drift:
+   Alert if any server's clock differs by >1 second from NTP
+
+2. Automatic correction:
+   NTP daemon gradually adjusts clock (doesn't jump)
+   After a few minutes, clocks sync again
+
+3. If drift is large (>1 minute):
+   Refuse to generate IDs until clock syncs
+   Better to be unavailable than generate wrong timestamps
+
+Prevention:
+   - Use NTP on all servers
+   - Monitor: clock_offset_seconds
+   - Alert: if offset >1 second
+   - Automatic: Restart service if offset >10 seconds
+```
+
+**Conclusion:**
+Clock drift causes minor time-ordering issues but doesn't break uniqueness.
+In practice, with good NTP monitoring, this rarely happens.
+
+</details>
+
+---
+
+### **Interview Answer Template:**
+
+**Q: "Explain Snowflake IDs and why you'd use them"**
+
+```
+"Snowflake IDs are 64-bit distributed unique identifiers.
+
+Structure: [41-bit timestamp][10-bit datacenter][10-bit worker][12-bit sequence]
+
+Key benefits:
+1. No coordination - each server generates independently
+2. Time-ordered - newer IDs are numerically greater
+3. High capacity - 4 million IDs/sec per worker
+4. Multi-region safe - different datacenter IDs prevent collisions
+
+For URL shortener:
+  - Each service instance has unique datacenter+worker ID
+  - Generate IDs locally (no DB hit)
+  - 4M IDs/sec capacity vs our 40 IDs/sec load = 100,000× headroom
+  - Time-ordered enables efficient range-based sharding
+
+Better than auto-increment because:
+  - No single point of failure (DB master)
+  - No performance bottleneck
+  - Works in multi-region setup
+  - Can generate even when DB is down"
+```
+
+---
+
+# **SECTION 4 NOW COMPLETE!** ✅
+
+**You now have full coverage of:**
+- 4.1 Bloom Filters (sizing, use cases)
+- 4.2 Redis HA (Sentinel vs Cluster)
+- 4.3 Database Sharding (range vs hash vs consistent)
+- 4.4 Distributed Locks (Redis locks vs DB constraints)
+- 4.5 Snowflake IDs (structure, capacity, edge cases) ← COMPLETE
+
+**All sections ready for interview! 🚀**
