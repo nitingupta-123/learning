@@ -250,7 +250,7 @@ Cold URLs: Don't cache
 ```
 On service startup:
   - Load top 1000 URLs into cache
-  - Prevents "thundering herd" at cold start
+  - Prevents "thundering herd" at cold start: https://chatgpt.com/share/69577d81-db1c-8001-9731-83fa2ea388ae
 ```
 
 **3. Monitoring:**
