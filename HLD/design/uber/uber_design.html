@@ -1,0 +1,1946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Uber/Ola System Design — FAANG SDE2 Cheat Sheet</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;600&family=DM+Serif+Display&display=swap');
+
+  :root {
+    --bg: #0f1117;
+    --bg2: #171b26;
+    --bg3: #1e2433;
+    --border: rgba(255,255,255,0.08);
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #f59e0b;
+    --accent2: #10b981;
+    --accent3: #3b82f6;
+    --red: #ef4444;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+    --serif: 'DM Serif Display', serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header-icon {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+
+  header h1 {
+    font-family: var(--serif);
+    font-size: 20px;
+    color: var(--text);
+    font-weight: 400;
+  }
+
+  header span {
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--bg3);
+    padding: 3px 10px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    margin-left: auto;
+  }
+
+  .tab-bar {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    overflow-x: auto;
+    padding: 0 16px;
+    gap: 2px;
+    scrollbar-width: none;
+  }
+  .tab-bar::-webkit-scrollbar { display: none; }
+
+  .tab-btn {
+    padding: 12px 14px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-content { display: none; padding: 32px; max-width: 900px; margin: 0 auto; }
+  .tab-content.active { display: block; }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 26px;
+    font-weight: 400;
+    color: var(--text);
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 28px 0 12px;
+  }
+
+  h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 20px 0 8px;
+  }
+
+  p { color: var(--muted); margin-bottom: 10px; }
+
+  .insight {
+    background: rgba(16,185,129,0.08);
+    border-left: 3px solid var(--accent2);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+    color: #6ee7b7;
+  }
+  .insight strong { color: var(--accent2); display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  .warn {
+    background: rgba(245,158,11,0.08);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+    color: #fcd34d;
+  }
+  .warn strong { color: var(--accent); display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  .danger {
+    background: rgba(239,68,68,0.08);
+    border-left: 3px solid var(--red);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+    color: #fca5a5;
+  }
+  .danger strong { color: var(--red); display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  pre {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #a5f3fc;
+    overflow-x: auto;
+    margin: 12px 0;
+    line-height: 1.6;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  th {
+    background: var(--bg3);
+    color: var(--accent);
+    font-weight: 600;
+    padding: 10px 14px;
+    text-align: left;
+    border: 1px solid var(--border);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  td {
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    vertical-align: top;
+  }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-green { background: rgba(16,185,129,0.15); color: #6ee7b7; }
+  .badge-amber { background: rgba(245,158,11,0.15); color: #fcd34d; }
+  .badge-red { background: rgba(239,68,68,0.15); color: #fca5a5; }
+  .badge-blue { background: rgba(59,130,246,0.15); color: #93c5fd; }
+
+  .req-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  .req-box {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .req-box h4 { margin-top: 0; }
+  .req-box ul { list-style: none; }
+  .req-box ul li { color: var(--muted); padding: 4px 0; font-size: 13px; }
+  .req-box ul li::before { content: "→ "; color: var(--accent2); }
+
+  .qa-item {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 10px 0;
+    overflow: hidden;
+  }
+  .qa-q {
+    padding: 14px 18px;
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+    font-size: 13px;
+  }
+  .qa-q:hover { background: rgba(255,255,255,0.03); }
+  .qa-q .chevron { color: var(--accent); font-size: 16px; transition: transform 0.2s; }
+  .qa-a {
+    display: none;
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .qa-item.open .qa-a { display: block; }
+  .qa-item.open .chevron { transform: rotate(90deg); }
+
+  .rubric-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+  }
+  .rubric-label { width: 130px; font-size: 13px; color: var(--muted); flex-shrink: 0; }
+  .rubric-track {
+    flex: 1;
+    height: 6px;
+    background: var(--bg3);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .rubric-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 99px;
+  }
+  .rubric-score { font-size: 12px; color: var(--accent); width: 40px; text-align: right; font-family: var(--mono); }
+
+  .time-guide {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin: 16px 0;
+  }
+  .time-box {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+  .time-box .mins { font-size: 24px; font-family: var(--serif); color: var(--accent); }
+  .time-box .label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .redflag-list { list-style: none; }
+  .redflag-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .redflag-list li::before { content: "✗"; color: var(--red); flex-shrink: 0; font-weight: 700; }
+
+  .diagram-wrap {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 20px 0;
+  }
+  .diagram-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 16px;
+  }
+
+  .step-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 12px 0;
+  }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .step-num {
+    width: 22px; height: 22px;
+    background: var(--accent);
+    color: #000;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .step-arrow { color: var(--border); font-size: 10px; margin-left: 32px; }
+
+  @media (max-width: 600px) {
+    .req-grid { grid-template-columns: 1fr; }
+    .time-guide { grid-template-columns: repeat(2,1fr); }
+    .tab-content { padding: 20px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-icon">🚖</div>
+  <h1>Uber / Ola — System Design</h1>
+  <span>FAANG SDE2 Cheat Sheet</span>
+</header>
+
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="showTab(0)">1. Overview</button>
+  <button class="tab-btn" onclick="showTab(1)">2. Numbers</button>
+  <button class="tab-btn" onclick="showTab(2)">3. Diagrams</button>
+  <button class="tab-btn" onclick="showTab(3)">4. Protocols</button>
+  <button class="tab-btn" onclick="showTab(4)">5. Storage</button>
+  <button class="tab-btn" onclick="showTab(5)">6. Matching</button>
+  <button class="tab-btn" onclick="showTab(6)">7. Geo-Index</button>
+  <button class="tab-btn" onclick="showTab(7)">8. Surge</button>
+  <button class="tab-btn" onclick="showTab(8)">9. Lifecycle</button>
+  <button class="tab-btn" onclick="showTab(9)">10. Tradeoffs</button>
+  <button class="tab-btn" onclick="showTab(10)">11. Failures</button>
+  <button class="tab-btn" onclick="showTab(11)">12. Q&amp;A</button>
+  <button class="tab-btn" onclick="showTab(12)">13. Rubric</button>
+  <button class="tab-btn" onclick="showTab(13)">14. API Design</button>
+  <button class="tab-btn" onclick="showTab(14)">15. DB Schema</button>
+  <button class="tab-btn" onclick="showTab(15)">16. Observability</button>
+</div>
+
+<!-- TAB 1: OVERVIEW -->
+<div class="tab-content active">
+  <h2>Overview</h2>
+  <div class="insight">
+    <strong>Core Opening Insight</strong>
+    This is a location-heavy write system at heart. The central design challenge is not "how to store rides" — it's "how to index 500K moving driver locations in real time and query them by geography in under 100ms." Separate stateful services (Location, Matching) from stateless services (Auth, Fare, Profile) from day one.
+  </div>
+
+  <h3>Functional Requirements</h3>
+  <div class="req-grid">
+    <div class="req-box">
+      <h4>Core (In Scope)</h4>
+      <ul>
+        <li>Rider books a ride from current location</li>
+        <li>System finds nearest available driver</li>
+        <li>Real-time driver location on rider screen</li>
+        <li>Ride lifecycle: request → match → pickup → drop</li>
+        <li>Fare calculation at end of trip</li>
+        <li>Rider/Driver profiles with ratings</li>
+        <li>Ride history for both rider and driver</li>
+      </ul>
+    </div>
+    <div class="req-box">
+      <h4>Miscellaneous (Mention, Don't Design)</h4>
+      <ul>
+        <li>Surge/dynamic pricing</li>
+        <li>Scheduled rides</li>
+        <li>Carpooling / shared rides</li>
+        <li>Driver payments / settlements</li>
+        <li>In-app chat between rider and driver</li>
+        <li>Route navigation</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Non-Functional Requirements</h3>
+  <div class="req-grid">
+    <div class="req-box">
+      <h4>Latency</h4>
+      <ul>
+        <li>Driver matched within 5 seconds of booking</li>
+        <li>Location update visible in &lt;2 seconds</li>
+        <li>Fare returned within 1 second of trip end</li>
+      </ul>
+    </div>
+    <div class="req-box">
+      <h4>Scale + Reliability</h4>
+      <ul>
+        <li>Handle peak metro-city load (office hours)</li>
+        <li>Matching failure → queue, not error</li>
+        <li>Driver disconnect → graceful degradation</li>
+        <li>No double assignment of same driver</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Out of Scope</h3>
+  <p style="color:var(--muted)">ML-based demand forecasting, driver earnings dashboard, compliance/background checks, route optimization engine (use Google Maps API), multi-city fleet management, fraud detection.</p>
+
+  <div class="insight">
+    <strong>Stateful vs Stateless Split — State This Early</strong>
+    Location Service is the only stateful service — it maintains persistent WebSocket connections per driver. Matching Service is stateless — reads Redis, writes PostgreSQL, any pod handles any request. Auth, Fare, Profile, Trip Service are all stateless. Mixing these will kill your scale story.
+  </div>
+
+  <div class="warn">
+    <strong>Red Flag</strong>
+    Never start designing before asking: "Are we designing just the matching flow, or full lifecycle including payments?" Scope this in the first 60 seconds. A SDE1 starts drawing boxes immediately.
+  </div>
+</div>
+
+<!-- TAB 2: NUMBERS -->
+<div class="tab-content">
+  <h2>Capacity Estimation</h2>
+  <div class="insight">
+    <strong>Always Show Your Math</strong>
+    State assumptions first. Then derive. Never guess a number without showing how you got there.
+  </div>
+
+  <h3>Assumptions</h3>
+  <pre>DAU (total)       : 10M  (9.5M riders + 500K drivers)
+Active drivers    : 500K at peak (6 PM weekday in metro cities)
+Rides per rider   : 2 per day
+Location update   : every 4 seconds per driver</pre>
+
+  <h3>Ride Request QPS</h3>
+  <pre>Total rides/day   = 10M riders × 2 rides = 20M rides/day
+Spread over 18hrs = 20M / (18 × 3600)
+                  = 20,000,000 / 64,800
+                  ≈ 308 ride requests/sec
+
+Peak multiplier (2x) → ~600 ride requests/sec at office hours</pre>
+
+  <h3>Location Write QPS — The Critical Number</h3>
+  <pre>Active drivers    = 500,000
+Update frequency  = 1 update every 4 seconds
+
+Location writes/sec = 500,000 / 4 = 125,000 writes/sec = 125K/sec
+
+This is your main bottleneck argument.
+PostgreSQL max    ≈ 40K writes/sec (ideal conditions, single node)
+125K >> 40K → SQL is dead on arrival for location storage.</pre>
+
+  <h3>Location Read QPS</h3>
+  <pre>Active concurrent rides (Little's Law):
+  Arrival rate × Avg duration = 500 rides/sec × 1200sec (20 min avg)
+                              = 600K concurrent rides
+
+But NOT all riders read location — only those in DRIVER_EN_ROUTE state:
+  State 1 REQUESTED (30s)    → 600K × (30/1200)  ≈ 15K riders
+  State 2 DRIVER_EN_ROUTE (5min) → 600K × (300/1200) ≈ 150K riders ← active readers
+  State 3 IN_PROGRESS (15min) → rider in cab, not watching screen
+
+Active readers ≈ 150K
+Location reads/sec = 150,000 / 4 = 37,500 ≈ 40K reads/sec
+
+Write : Read = 125K : 40K = 3:1 → write-heavy
+→ Confirms Redis (in-memory, write-optimized) as the right choice.</pre>
+
+  <h3>Storage Estimation</h3>
+  <pre>--- Ride History ---
+Rides/day             = 20M
+Record size per trip  ≈ 500 bytes (pickup, dropoff, route, fare, IDs)
+Daily storage         = 20M × 500B = 10 GB/day
+Annual                = 10 GB × 365 = 3.65 TB/year
+
+--- Driver Location (Redis, ephemeral) ---
+Per driver entry      ≈ 64 bytes (driver_id + lat + lng + TTL metadata)
+Total active drivers  = 500K
+Redis memory needed   = 500K × 64B ≈ 32 MB  ← trivial, fits in single Redis node
+
+--- Trip (PostgreSQL, active only) ---
+Active trips at peak  ≈ 100K
+Per record            ≈ 2 KB
+Active DB size        ≈ 200 MB  ← easily fits in memory</pre>
+
+  <div class="insight">
+    <strong>Why SQL Dies at 125K Writes/Sec</strong>
+    SQL uses B-Tree indexes on disk. Every location update = index update = disk I/O. At 125K writes/sec, even with SSDs and tuning, a single PostgreSQL node saturates. More critically, location data is ephemeral — it's useless after 30 seconds. Paying for ACID, joins, and indexes on data you throw away is the wrong tradeoff. Redis GEO is in-memory, has native geo-commands, and handles 125K writes/sec on a single node.
+  </div>
+</div>
+
+<!-- TAB 3: DIAGRAMS -->
+<div class="tab-content">
+  <h2>Architecture Diagrams</h2>
+  <p style="color:var(--muted); margin-bottom:24px">Five diagrams — each covers a distinct flow. In interview: draw Diagram 1 first, then zoom into flows when interviewer asks. Each diagram is self-contained and interview-ready.</p>
+
+  <!-- DIAGRAM 1: SYSTEM OVERVIEW -->
+
+
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <!-- DIAGRAM 1 — SYSTEM OVERVIEW (Whiteboard Style)              -->
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <div class="diagram-wrap">
+    <div class="diagram-title">Diagram 1 — System Overview (Draw This First in Interview)</div>
+    <svg width="100%" viewBox="0 0 820 560" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="d1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <!-- Rider Client -->
+      <rect x="10" y="60" width="110" height="70" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="65" y="82" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#fcd34d" font-weight="700">Rider Client</text>
+      <text x="65" y="97" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">iOS/Android</text>
+      <text x="65" y="112" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">HTTP + WebSocket</text>
+
+      <!-- Driver Client -->
+      <rect x="10" y="170" width="110" height="70" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1.5"/>
+      <text x="65" y="192" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#6ee7b7" font-weight="700">Driver Client</text>
+      <text x="65" y="207" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">iOS/Android</text>
+      <text x="65" y="222" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">WebSocket</text>
+
+      <!-- LB + API GW -->
+      <rect x="165" y="90" width="130" height="90" rx="6" fill="#1e2433" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="230" y="113" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#93c5fd" font-weight="700">API Gateway</text>
+      <text x="230" y="128" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#93c5fd">+ Load Balancer</text>
+      <text x="230" y="146" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- routing</text>
+      <text x="230" y="160" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- authentication</text>
+      <text x="230" y="174" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- rate limiting</text>
+
+      <!-- Arrows clients → GW -->
+      <line x1="120" y1="95" x2="165" y2="120" stroke="#f59e0b" stroke-width="1.2" marker-end="url(#d1)"/>
+      <line x1="120" y1="205" x2="165" y2="160" stroke="#10b981" stroke-width="1.2" marker-end="url(#d1)"/>
+
+      <!-- Trip/Matching Service -->
+      <rect x="345" y="40" width="150" height="110" rx="6" fill="#1e2433" stroke="#8b5cf6" stroke-width="1.5"/>
+      <text x="420" y="63" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#c4b5fd" font-weight="700">Ride Service</text>
+      <text x="420" y="80" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- fare estimation</text>
+      <text x="420" y="95" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- ride creation</text>
+      <text x="420" y="110" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- triggers matching</text>
+      <text x="420" y="125" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- driver accept/decline</text>
+      <text x="420" y="140" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- trip lifecycle</text>
+
+      <!-- Arrow GW → Trip -->
+      <line x1="295" y1="118" x2="345" y2="100" stroke="#3b82f6" stroke-width="1.2" marker-end="url(#d1)"/>
+      <text x="315" y="100" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#f59e0b">getFareEstimate()</text>
+      <text x="315" y="113" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#f59e0b">bookRide()</text>
+
+      <!-- 3rd Party Maps -->
+      <rect x="345" y="0" width="150" height="34" rx="6" fill="#1e2433" stroke="#334155" stroke-width="1" stroke-dasharray="4 3"/>
+      <text x="420" y="21" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">3rd Party Maps API</text>
+
+      <line x1="420" y1="34" x2="420" y2="40" stroke="#475569" stroke-width="1" marker-end="url(#d1)"/>
+
+      <!-- Kafka Queue -->
+      <rect x="345" y="180" width="150" height="50" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="1.2"/>
+      <text x="420" y="202" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#fcd34d" font-weight="700">Kafka</text>
+      <text x="420" y="220" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">ride-requests topic</text>
+
+      <line x1="420" y1="150" x2="420" y2="180" stroke="#8b5cf6" stroke-width="1.2" marker-end="url(#d1)"/>
+
+      <!-- Matching Service -->
+      <rect x="345" y="258" width="150" height="70" rx="6" fill="#1e2433" stroke="#8b5cf6" stroke-width="1.5"/>
+      <text x="420" y="280" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#c4b5fd" font-weight="700">Matching Svc</text>
+      <text x="420" y="297" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- GEORADIUS query</text>
+      <text x="420" y="312" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- filter available drivers</text>
+
+      <line x1="420" y1="230" x2="420" y2="258" stroke="#f59e0b" stroke-width="1.2" marker-end="url(#d1)"/>
+
+      <!-- Location Service -->
+      <rect x="345" y="360" width="150" height="70" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="2"/>
+      <text x="420" y="382" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#fcd34d" font-weight="700">Location Svc</text>
+      <text x="420" y="399" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#f59e0b">STATEFUL</text>
+      <text x="420" y="415" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">WebSocket pods</text>
+
+      <!-- Arrow GW → Location -->
+      <line x1="230" y1="180" x2="230" y2="395" stroke="#10b981" stroke-width="1" stroke-dasharray="4 3"/>
+      <line x1="230" y1="395" x2="345" y2="395" stroke="#10b981" stroke-width="1.2" marker-end="url(#d1)"/>
+      <text x="275" y="410" font-family="DM Sans,sans-serif" font-size="9" fill="#10b981">updateLocation()</text>
+
+      <!-- DB -->
+      <rect x="560" y="40" width="140" height="140" rx="6" fill="#1e2433" stroke="#6366f1" stroke-width="1.5"/>
+      <text x="630" y="63" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#a5b4fc" font-weight="700">DB</text>
+      <text x="630" y="79" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">PostgreSQL</text>
+      <text x="630" y="98" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#f59e0b" font-weight="600">Ride</text>
+      <text x="630" y="112" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- rideId, riderId</text>
+      <text x="630" y="126" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- driverId, fareId</text>
+      <text x="630" y="140" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- source, dest</text>
+      <text x="630" y="154" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- status</text>
+      <text x="630" y="170" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- createdAt</text>
+
+      <line x1="495" y1="95" x2="560" y2="95" stroke="#6366f1" stroke-width="1.2" marker-end="url(#d1)"/>
+
+      <!-- Redis -->
+      <rect x="560" y="200" width="140" height="80" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1.5"/>
+      <text x="630" y="223" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#fca5a5" font-weight="700">Redis GEO</text>
+      <text x="630" y="240" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">Location DB</text>
+      <text x="630" y="257" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">stores lat/lng + TTL</text>
+      <text x="630" y="273" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">125K writes/sec</text>
+
+      <line x1="495" y1="293" x2="560" y2="240" stroke="#ef4444" stroke-width="1.2" marker-end="url(#d1)"/>
+      <text x="520" y="258" font-family="DM Sans,sans-serif" font-size="9" fill="#ef4444">Fetch closest</text>
+      <text x="520" y="270" font-family="DM Sans,sans-serif" font-size="9" fill="#ef4444">drivers</text>
+
+      <line x1="495" y1="395" x2="560" y2="260" stroke="#ef4444" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#d1)"/>
+
+      <!-- Notification Service -->
+      <rect x="10" y="380" width="130" height="60" rx="6" fill="#1e2433" stroke="#8b5cf6" stroke-width="1.2"/>
+      <text x="75" y="403" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#c4b5fd" font-weight="700">Notification Svc</text>
+      <text x="75" y="419" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">APN / FCM</text>
+
+      <!-- Arrow Matching → Notification -->
+      <line x1="345" y1="310" x2="140" y2="410" stroke="#8b5cf6" stroke-width="1.2" marker-end="url(#d1)"/>
+      <text x="220" y="345" font-family="DM Sans,sans-serif" font-size="9" fill="#8b5cf6">Send driver notif</text>
+      <text x="220" y="357" font-family="DM Sans,sans-serif" font-size="9" fill="#8b5cf6">to accept/decline</text>
+
+      <!-- Arrow Notif → Rider -->
+      <line x1="75" y1="380" x2="65" y2="130" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#d1)"/>
+      <text x="25" y="270" font-family="DM Sans,sans-serif" font-size="9" fill="#8b5cf6">push to rider</text>
+
+      <!-- Driver schema -->
+      <rect x="690" y="200" width="120" height="100" rx="6" fill="#1e2433" stroke="#334155" stroke-width="0.8"/>
+      <text x="750" y="220" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#f59e0b" font-weight="600">Driver</text>
+      <text x="750" y="236" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- id, name</text>
+      <text x="750" y="250" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- vehicle</text>
+      <text x="750" y="264" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- status</text>
+      <text x="750" y="278" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- rating</text>
+
+      <rect x="690" y="320" width="120" height="80" rx="6" fill="#1e2433" stroke="#334155" stroke-width="0.8"/>
+      <text x="750" y="340" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#f59e0b" font-weight="600">Fare</text>
+      <text x="750" y="356" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- id, userId</text>
+      <text x="750" y="370" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- source, dest</text>
+      <text x="750" y="384" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">- price, eta</text>
+
+      <!-- Legend -->
+      <rect x="10" y="470" width="800" height="30" rx="6" fill="#1e2433" stroke="#334155" stroke-width="0.5"/>
+      <rect x="20" y="480" width="10" height="10" rx="2" fill="none" stroke="#f59e0b" stroke-width="2"/>
+      <text x="36" y="489" font-family="DM Sans,sans-serif" font-size="10" fill="#94a3b8">Stateful (WebSocket)</text>
+      <rect x="160" y="480" width="10" height="10" rx="2" fill="none" stroke="#475569" stroke-width="1.5"/>
+      <text x="176" y="489" font-family="DM Sans,sans-serif" font-size="10" fill="#94a3b8">Stateless service</text>
+      <rect x="300" y="480" width="10" height="10" rx="2" fill="none" stroke="#334155" stroke-width="1" stroke-dasharray="3 2"/>
+      <text x="316" y="489" font-family="DM Sans,sans-serif" font-size="10" fill="#94a3b8">3rd party / external</text>
+      <text x="500" y="489" font-family="DM Sans,sans-serif" font-size="10" fill="#ef4444">Redis GEO = location store · 125K writes/sec · TTL 35s per driver</text>
+    </svg>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <!-- DIAGRAM 2 — DRIVER LOCATION TRACKING                       -->
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <div class="diagram-wrap">
+    <div class="diagram-title">Diagram 2 — Driver Location Tracking Flow</div>
+    <svg width="100%" viewBox="0 0 820 420" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="d2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <text x="10" y="20" font-family="DM Sans,sans-serif" font-size="11" fill="#10b981" font-weight="700">WRITE PATH — Driver pings every 4 seconds</text>
+
+      <!-- Driver -->
+      <rect x="10" y="34" width="110" height="60" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1.5"/>
+      <text x="65" y="57" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#6ee7b7" font-weight="700">Driver App</text>
+      <text x="65" y="73" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">GPS every 4s</text>
+
+      <text x="128" y="57" font-family="DM Sans,sans-serif" font-size="9" fill="#10b981">WebSocket</text>
+      <text x="128" y="68" font-family="DM Sans,sans-serif" font-size="9" fill="#10b981">updateLocation()</text>
+      <line x1="120" y1="64" x2="168" y2="64" stroke="#10b981" stroke-width="1.5" marker-end="url(#d2)"/>
+
+      <!-- Location Service -->
+      <rect x="168" y="34" width="140" height="60" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="2"/>
+      <text x="238" y="57" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#fcd34d" font-weight="700">Location Service</text>
+      <text x="238" y="73" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#f59e0b">STATEFUL · Pod B</text>
+
+      <!-- Two writes from Location Service -->
+      <line x1="308" y1="50" x2="368" y2="30" stroke="#ef4444" stroke-width="1.2" marker-end="url(#d2)"/>
+      <line x1="308" y1="78" x2="368" y2="98" stroke="#ef4444" stroke-width="1.2" marker-end="url(#d2)"/>
+
+      <!-- Redis Registry -->
+      <rect x="368" y="10" width="200" height="44" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1.2"/>
+      <text x="468" y="28" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fca5a5" font-weight="600">Redis Registry</text>
+      <text x="468" y="44" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">SET driver:42:pod "Pod-B" EX 35</text>
+
+      <!-- Redis GEO -->
+      <rect x="368" y="78" width="200" height="44" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1.2"/>
+      <text x="468" y="96" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fca5a5" font-weight="600">Redis GEO</text>
+      <text x="468" y="112" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">GEOADD drivers:active lng lat 42</text>
+
+      <!-- TTL note -->
+      <rect x="590" y="40" width="150" height="40" rx="6" fill="#1e2433" stroke="#475569" stroke-width="0.8"/>
+      <text x="665" y="56" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#e2e8f0">TTL resets to 35s</text>
+      <text x="665" y="70" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">on each 4s ping</text>
+      <line x1="568" y1="32" x2="590" y2="55" stroke="#475569" stroke-width="0.8" marker-end="url(#d2)"/>
+
+      <!-- Divider -->
+      <line x1="10" y1="155" x2="810" y2="155" stroke="#334155" stroke-width="0.5" stroke-dasharray="4 3"/>
+      <text x="400" y="148" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#475569">DISCONNECT SCENARIOS</text>
+
+      <!-- Reconnect within 35s -->
+      <text x="10" y="175" font-family="DM Sans,sans-serif" font-size="10" fill="#10b981" font-weight="700">Reconnects within 35s → Self-heal</text>
+      <rect x="10" y="185" width="120" height="44" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1"/>
+      <text x="70" y="203" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#6ee7b7">New TCP conn</text>
+      <text x="70" y="218" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">LB → Pod D</text>
+      <line x1="130" y1="207" x2="165" y2="207" stroke="#10b981" stroke-width="1.2" marker-end="url(#d2)"/>
+      <rect x="165" y="185" width="160" height="44" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1"/>
+      <text x="245" y="203" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#6ee7b7">Redis overwrite</text>
+      <text x="245" y="218" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">driver:42:pod = Pod-D</text>
+      <line x1="325" y1="207" x2="360" y2="207" stroke="#10b981" stroke-width="1.2" marker-end="url(#d2)"/>
+      <rect x="360" y="185" width="120" height="44" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1"/>
+      <text x="420" y="207" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#6ee7b7" font-weight="600">Self-healed ✓</text>
+
+      <!-- TTL expires -->
+      <text x="10" y="262" font-family="DM Sans,sans-serif" font-size="10" fill="#ef4444" font-weight="700">Offline 35s+ → Auto removed</text>
+      <rect x="10" y="272" width="130" height="44" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1" stroke-dasharray="4 3"/>
+      <text x="75" y="290" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#fca5a5">No heartbeat</text>
+      <text x="75" y="305" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">TTL counting down</text>
+      <line x1="140" y1="294" x2="175" y2="294" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#d2)"/>
+      <rect x="175" y="272" width="140" height="44" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1" stroke-dasharray="4 3"/>
+      <text x="245" y="290" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#fca5a5">Redis key evicted</text>
+      <text x="245" y="305" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">key existence = online</text>
+      <line x1="315" y1="294" x2="350" y2="294" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#d2)"/>
+      <rect x="350" y="272" width="150" height="44" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1" stroke-dasharray="4 3"/>
+      <text x="425" y="290" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#fca5a5">GEORADIUS skips driver</text>
+      <text x="425" y="305" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">no explicit offline call</text>
+
+      <!-- Note -->
+      <rect x="10" y="345" width="800" height="40" rx="6" fill="#1e2433" stroke="#334155" stroke-width="0.5"/>
+      <text x="410" y="362" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#f59e0b" font-weight="600">KEY: </text>
+      <text x="500" y="362" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#94a3b8">Redis registry key existence IS the online status. No separate status field. TTL = self-healing offline detector. No cron job.</text>
+      <text x="400" y="378" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#94a3b8">Kafka partition key = Pod ID. onPartitionsAssigned() callback refreshes Redis on rebalancing.</text>
+    </svg>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <!-- DIAGRAM 3 — RIDE BOOKING FLOW                              -->
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <div class="diagram-wrap">
+    <div class="diagram-title">Diagram 3 — Ride Booking Flow (Rider Books → Driver Notified)</div>
+    <svg width="100%" viewBox="0 0 820 480" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="d3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <!-- Row 1 -->
+      <rect x="10" y="20" width="110" height="60" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="65" y="44" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#fcd34d" font-weight="700">Rider</text>
+      <text x="65" y="60" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">presses Book Ride</text>
+
+      <text x="130" y="44" font-family="DM Sans,sans-serif" font-size="9" fill="#f59e0b">POST /rides</text>
+      <text x="130" y="55" font-family="DM Sans,sans-serif" font-size="9" fill="#f59e0b">bookRide(src,dst)</text>
+      <line x1="120" y1="50" x2="170" y2="50" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#d3)"/>
+
+      <rect x="170" y="20" width="120" height="60" rx="6" fill="#1e2433" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="230" y="44" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#93c5fd" font-weight="700">LB + API GW</text>
+      <text x="230" y="60" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">auth + route</text>
+
+      <line x1="290" y1="50" x2="340" y2="50" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#d3)"/>
+
+      <rect x="340" y="20" width="150" height="60" rx="6" fill="#1e2433" stroke="#6366f1" stroke-width="1.5"/>
+      <text x="415" y="40" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#a5b4fc" font-weight="700">Trip Service</text>
+      <text x="415" y="56" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">INSERT ride_requests</text>
+      <text x="415" y="70" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">status = PENDING</text>
+
+      <!-- DB arrow -->
+      <line x1="490" y1="35" x2="560" y2="35" stroke="#6366f1" stroke-width="1" marker-end="url(#d3)"/>
+      <rect x="560" y="10" width="130" height="70" rx="6" fill="#1e2433" stroke="#6366f1" stroke-width="1"/>
+      <text x="625" y="30" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#a5b4fc" font-weight="600">PostgreSQL</text>
+      <text x="625" y="46" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">ride_requests table</text>
+      <text x="625" y="60" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">request_id, rider_id</text>
+      <text x="625" y="74" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">status=PENDING</text>
+
+      <!-- Row 2 -->
+      <line x1="415" y1="80" x2="415" y2="120" stroke="#6366f1" stroke-width="1.5" marker-end="url(#d3)"/>
+
+      <rect x="300" y="120" width="230" height="60" rx="6" fill="#1e2433" stroke="#8b5cf6" stroke-width="1.5"/>
+      <text x="415" y="143" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#c4b5fd" font-weight="700">Matching Service</text>
+      <text x="415" y="159" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">GEORADIUS → filter available → top 3</text>
+
+      <!-- Redis GEO arrow -->
+      <line x1="530" y1="150" x2="600" y2="150" stroke="#ef4444" stroke-width="1.2" marker-end="url(#d3)"/>
+      <text x="560" y="143" font-family="DM Sans,sans-serif" font-size="9" fill="#ef4444">GEORADIUS</text>
+      <rect x="600" y="120" width="150" height="60" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1.5"/>
+      <text x="675" y="143" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fca5a5" font-weight="700">Redis GEO</text>
+      <text x="675" y="159" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">top 10 nearby</text>
+      <text x="675" y="173" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">filter available</text>
+
+      <!-- Row 3 -->
+      <line x1="415" y1="180" x2="415" y2="220" stroke="#8b5cf6" stroke-width="1.5" marker-end="url(#d3)"/>
+
+      <rect x="300" y="220" width="230" height="60" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1.2"/>
+      <text x="415" y="243" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fca5a5" font-weight="600">Redis Registry lookup</text>
+      <text x="415" y="259" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">driver_id → Pod ID (each of 3)</text>
+
+      <!-- Row 4 -->
+      <line x1="415" y1="280" x2="415" y2="320" stroke="#ef4444" stroke-width="1.5" marker-end="url(#d3)"/>
+
+      <rect x="295" y="320" width="240" height="60" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="415" y="343" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#fcd34d" font-weight="700">Kafka publish</text>
+      <text x="415" y="359" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">key=Pod ID → driver-notifications topic</text>
+
+      <!-- Row 5 -->
+      <line x1="415" y1="380" x2="415" y2="420" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#d3)"/>
+
+      <rect x="245" y="420" width="340" height="50" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1.5"/>
+      <text x="415" y="442" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#6ee7b7" font-weight="700">Location Svc Pod (consumes its partition)</text>
+      <text x="415" y="458" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">connectionMap.get(driver_id) → WebSocket → Driver phone notification</text>
+    </svg>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <!-- DIAGRAM 4 — POST-ACCEPT FLOW                               -->
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <div class="diagram-wrap">
+    <div class="diagram-title">Diagram 4 — Post-Accept Flow (Driver Accepts → Rider Notified)</div>
+    <svg width="100%" viewBox="0 0 820 500" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="d4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <!-- Driver accepts -->
+      <rect x="290" y="10" width="240" height="55" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1.5"/>
+      <text x="410" y="31" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#6ee7b7" font-weight="700">Driver A accepts ride</text>
+      <text x="410" y="47" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">POST /rides/{id}/accept → LB → API GW</text>
+
+      <line x1="410" y1="65" x2="410" y2="100" stroke="#10b981" stroke-width="1.5" marker-end="url(#d4)"/>
+
+      <!-- Trip Service atomic update -->
+      <rect x="220" y="100" width="380" height="60" rx="6" fill="#1e2433" stroke="#6366f1" stroke-width="1.5"/>
+      <text x="410" y="122" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#a5b4fc" font-weight="700">Trip Service — Atomic UPDATE</text>
+      <text x="410" y="140" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">UPDATE ride_requests SET status=MATCHED, driver_id=42 WHERE request_id=X AND status=PENDING</text>
+
+      <!-- Split -->
+      <line x1="310" y1="160" x2="180" y2="200" stroke="#10b981" stroke-width="1.2" marker-end="url(#d4)"/>
+      <line x1="510" y1="160" x2="640" y2="200" stroke="#ef4444" stroke-width="1.2" marker-end="url(#d4)"/>
+      <text x="220" y="188" font-family="DM Sans,sans-serif" font-size="10" fill="#10b981" font-weight="700">1 row updated = WINNER</text>
+      <text x="580" y="188" font-family="DM Sans,sans-serif" font-size="10" fill="#ef4444" font-weight="700">0 rows = LOSER</text>
+
+      <!-- Winner path -->
+      <rect x="30" y="200" width="300" height="50" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1.2"/>
+      <text x="180" y="220" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#6ee7b7" font-weight="600">INSERT trips table + Redis update</text>
+      <text x="180" y="236" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">driver:42:status = "on_trip"</text>
+
+      <line x1="180" y1="250" x2="180" y2="290" stroke="#10b981" stroke-width="1.2" marker-end="url(#d4)"/>
+
+      <rect x="30" y="290" width="300" height="50" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="1.2"/>
+      <text x="180" y="310" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fcd34d" font-weight="600">Kafka → rider-notifications</text>
+      <text x="180" y="326" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">Notification Svc → Firebase → Rider</text>
+
+      <!-- Loser path -->
+      <rect x="490" y="200" width="300" height="50" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1"/>
+      <text x="640" y="220" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fca5a5" font-weight="600">Kafka → driver-cancel</text>
+      <text x="640" y="236" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">key = Pod of Driver B/C</text>
+
+      <line x1="640" y1="250" x2="640" y2="290" stroke="#ef4444" stroke-width="1.2" marker-end="url(#d4)"/>
+
+      <rect x="490" y="290" width="300" height="50" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1"/>
+      <text x="640" y="310" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fca5a5" font-weight="600">Pod B/C → WebSocket push</text>
+      <text x="640" y="326" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">"Ride no longer available" — graceful</text>
+
+      <!-- Note -->
+      <rect x="10" y="380" width="800" height="50" rx="6" fill="#1e2433" stroke="#334155" stroke-width="0.5"/>
+      <text x="410" y="400" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#f59e0b" font-weight="600">RACE CONDITION HANDLING</text>
+      <text x="410" y="416" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#94a3b8">SQL atomic UPDATE with WHERE status=PENDING → only 1 driver wins at DB level. No app-level locking.</text>
+      <text x="410" y="430" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#94a3b8">Driver B/C get graceful "ride unavailable" push — not an error screen. UX matters.</text>
+    </svg>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <!-- DIAGRAM 5 — TRIP COMPLETION FLOW                           -->
+  <!-- ════════════════════════════════════════════════════════════ -->
+  <div class="diagram-wrap">
+    <div class="diagram-title">Diagram 5 — Trip Completion Flow</div>
+    <svg width="100%" viewBox="0 0 820 440" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="d5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <!-- Driver ends trip -->
+      <rect x="280" y="10" width="260" height="55" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1.5"/>
+      <text x="410" y="31" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#6ee7b7" font-weight="700">Driver presses End Trip</text>
+      <text x="410" y="47" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">POST /rides/{id}/complete → LB → API GW</text>
+
+      <line x1="410" y1="65" x2="410" y2="100" stroke="#10b981" stroke-width="1.5" marker-end="url(#d5)"/>
+
+      <!-- Trip Service -->
+      <rect x="220" y="100" width="380" height="55" rx="6" fill="#1e2433" stroke="#6366f1" stroke-width="1.5"/>
+      <text x="410" y="121" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" fill="#a5b4fc" font-weight="700">Trip Service</text>
+      <text x="410" y="137" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">UPDATE trips SET status=PAYMENT_PENDING</text>
+
+      <!-- 3 parallel actions -->
+      <line x1="300" y1="155" x2="150" y2="200" stroke="#6366f1" stroke-width="1" marker-end="url(#d5)"/>
+      <line x1="410" y1="155" x2="410" y2="200" stroke="#6366f1" stroke-width="1" marker-end="url(#d5)"/>
+      <line x1="520" y1="155" x2="670" y2="200" stroke="#6366f1" stroke-width="1" marker-end="url(#d5)"/>
+
+      <rect x="20" y="200" width="260" height="50" rx="6" fill="#1e2433" stroke="#ef4444" stroke-width="1.2"/>
+      <text x="150" y="220" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fca5a5" font-weight="600">Redis update</text>
+      <text x="150" y="236" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">driver:42:status = "available" (immediately)</text>
+
+      <rect x="295" y="200" width="230" height="50" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="1.2"/>
+      <text x="410" y="220" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fcd34d" font-weight="600">Kafka → Fare Worker</text>
+      <text x="410" y="236" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">async fare calc (Maps API)</text>
+
+      <rect x="540" y="200" width="260" height="50" rx="6" fill="#1e2433" stroke="#8b5cf6" stroke-width="1.2"/>
+      <text x="670" y="220" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#c4b5fd" font-weight="600">Kafka → Rating Svc</text>
+      <text x="670" y="236" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">async — rate your trip prompt</text>
+
+      <!-- Fare Worker result -->
+      <line x1="410" y1="250" x2="410" y2="300" stroke="#f59e0b" stroke-width="1.2" marker-end="url(#d5)"/>
+
+      <rect x="255" y="300" width="310" height="55" rx="6" fill="#1e2433" stroke="#f59e0b" stroke-width="1.2"/>
+      <text x="410" y="321" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#fcd34d" font-weight="600">Fare calculated → UPDATE trips</text>
+      <text x="410" y="337" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">status=COMPLETED, fare=₹245, idempotencyKey=trip_id</text>
+
+      <line x1="410" y1="355" x2="410" y2="390" stroke="#f59e0b" stroke-width="1.2" marker-end="url(#d5)"/>
+
+      <rect x="230" y="390" width="360" height="40" rx="6" fill="#1e2433" stroke="#10b981" stroke-width="1.2"/>
+      <text x="410" y="407" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11" fill="#6ee7b7" font-weight="600">Notify Rider + Driver — fare receipt</text>
+      <text x="410" y="421" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="10" fill="#64748b">Kafka → Notification Svc → Firebase</text>
+    </svg>
+  </div>
+
+</div>
+
+
+<!-- TAB 4: PROTOCOLS -->
+<div class="tab-content">
+  <h2>Protocol Deep Dive</h2>
+
+  <div class="insight">
+    <strong>The Core Decision</strong>
+    HTTP polling fails at 125K writes/sec. WebSocket solves bandwidth but introduces statefulness. Everything after this is consequence management.
+  </div>
+
+  <h3>Polling vs Long Polling vs WebSocket</h3>
+  <table>
+    <tr><th>Protocol</th><th>How it works</th><th>Exact failure reason for location</th></tr>
+    <tr><td><span class="badge badge-red">HTTP Polling</span></td><td>Rider/Driver hits endpoint every N seconds</td><td>500K drivers × 1 req/4s = 125K req/sec of pure overhead. Each HTTP request = TCP setup + auth + headers. At 500K drivers on 4s interval, this is 125K new connections/sec — server collapses under handshake cost alone.</td></tr>
+    <tr><td><span class="badge badge-amber">Long Polling</span></td><td>Server holds connection open until data available</td><td>Round-robin load balancer sends reconnect to a different server. Server 2 has no context for this driver's session. Breaks routing — you'd need sticky sessions, and sticky sessions break horizontal scaling.</td></tr>
+    <tr><td><span class="badge badge-green">WebSocket</span></td><td>Persistent bidirectional TCP connection</td><td>Driver opens one connection. Location updates flow through it continuously. Zero reconnect overhead. Server pushes to rider app same way. Winner.</td></tr>
+  </table>
+
+  <div class="warn">
+    <strong>The Statefulness Cost — Always Mention This</strong>
+    WebSocket connections are stateful. The same driver MUST always hit the same Location Service instance. This requires sticky sessions at the load balancer (based on driver_id hash) OR a connection registry in Redis so any instance can route to the right connection owner. This is the tradeoff you must articulate.
+  </div>
+
+  <h3>Redis Connection Registry</h3>
+  <pre>Key   : driver:{driver_id}:connection
+Value : location_service_pod_id
+TTL   : 30s (reset on each heartbeat)
+
+Why Redis not Zookeeper?
+→ Redis: sub-ms reads, purpose-built KV, TTL support native
+→ Zookeeper: consensus protocol, ~10ms reads, built for leader election
+   Using ZK for per-request routing lookup = 10ms added to every location update
+   = 125K × 10ms = 1250 server-seconds of wasted latency/sec</pre>
+
+  <h3>Zookeeper's Actual Role</h3>
+  <pre>Zookeeper is used ONLY at login time for service discovery:
+  → Driver logs in → hits API Gateway → ZK tells it which
+    Location Service instances are alive → driver connects to one
+  → ZK is NOT queried per location update
+  → ZK watches for Location Service instance health (liveness)</pre>
+
+  <h3>Heartbeat Mechanism</h3>
+  <pre>Driver sends heartbeat ping every 4s (same as location update)
+Redis TTL on driver key = 30s
+
+Why not 1s heartbeat?
+  → 500K drivers × 1 ping/sec = 500K Redis writes/sec
+  → Current: 500K/4 = 125K Redis writes/sec
+  → 4x reduction in Redis load for same fault detection latency
+
+Zombie connection problem:
+  → Driver app crashes without clean close (network drop, OOM kill)
+  → TCP connection hangs on server (server doesn't know yet)
+  → Redis TTL expires after 30s → driver key gone → auto-offline
+  → No manual cleanup needed. TTL IS the offline signal.</pre>
+
+  <div class="insight">
+    <strong>Multi-Pod Deployment — DB-Level Locking</strong>
+    Application-level sequential processing works on a single pod. With 10 Location Service pods, two pods can receive two ride requests for the same driver simultaneously. Application code cannot see each other's state. Only DB-level SELECT FOR UPDATE on the driver row guarantees mutual exclusion. This is the multi-pod inventory safety rule.
+  </div>
+</div>
+
+<!-- TAB 5: STORAGE -->
+<div class="tab-content">
+  <h2>Storage + Schema</h2>
+
+  <h3>Storage Decision Table</h3>
+  <table>
+    <tr><th>Data</th><th>Store</th><th>Why</th><th>Not X because</th></tr>
+    <tr><td>Driver live location</td><td><span class="badge badge-red">Redis GEO</span></td><td>125K writes/sec, in-memory, native GEORADIUS, TTL support</td><td>SQL: 40K write/sec ceiling, disk I/O for ephemeral data is wasteful</td></tr>
+    <tr><td>Active trips</td><td><span class="badge badge-blue">PostgreSQL</span></td><td>ACID needed — can't double-assign driver. Relational (trip↔driver↔rider). 200 writes/sec = trivial</td><td>Cassandra: no native transactions, no SELECT FOR UPDATE</td></tr>
+    <tr><td>Ride history</td><td><span class="badge badge-amber">Cassandra</span></td><td>Append-only after trip completes, high read volume, no joins needed, time-range queries by user</td><td>PostgreSQL: B-Tree degrades at 10B+ rows, expensive range scans</td></tr>
+    <tr><td>Rider/Driver profiles</td><td><span class="badge badge-blue">MySQL</span></td><td>Relational, low write volume, complex joins (profile + ratings + vehicle info)</td><td>Cassandra: overkill, no joins, harder to maintain</td></tr>
+    <tr><td>Route GPS traces</td><td><span class="badge badge-green">S3</span></td><td>Binary blob, write-once, queried rarely (disputes, analytics)</td><td>DB: storing blob in DB is anti-pattern</td></tr>
+    <tr><td>Driver connection registry</td><td><span class="badge badge-red">Redis KV</span></td><td>Sub-ms lookup, TTL support, high read QPS</td><td>Zookeeper: 10ms reads, consensus overhead for simple KV lookup</td></tr>
+  </table>
+
+  <h3>Redis GEO Schema</h3>
+  <pre>GEOADD  drivers:active  {longitude}  {latitude}  "{driver_id}"
+TTL     driver:{driver_id}  30  (reset on each heartbeat)
+
+GEORADIUS drivers:active  {rider_lng}  {rider_lat}  5  km
+          ASC COUNT 10   → sorted by distance, top 10
+
+Geohash precision used internally: length 6 ≈ 1.2km cells
+→ Good enough for city-level matching
+→ Query current cell + 8 surrounding cells to handle boundary edge cases</pre>
+
+  <h3>PostgreSQL — Trips Schema</h3>
+  <pre>CREATE TABLE trips (
+  trip_id       BIGINT PRIMARY KEY,   -- Snowflake ID
+  rider_id      BIGINT NOT NULL,
+  driver_id     BIGINT NOT NULL,
+  status        VARCHAR(20),          -- REQUESTED|MATCHED|IN_PROGRESS|COMPLETED
+  pickup_lat    DECIMAL(10,7),
+  pickup_lng    DECIMAL(10,7),
+  dropoff_lat   DECIMAL(10,7),
+  dropoff_lng   DECIMAL(10,7),
+  fare          DECIMAL(10,2),
+  created_at    TIMESTAMP,
+  completed_at  TIMESTAMP
+);
+
+-- Critical index for driver assignment safety
+SELECT * FROM trips WHERE driver_id = ? AND status = 'IN_PROGRESS'
+FOR UPDATE;  -- prevents concurrent assignment of same driver</pre>
+
+  <h3>Cassandra — Ride History Schema</h3>
+  <pre>CREATE TABLE ride_history (
+  user_id       BIGINT,
+  year_month    TEXT,         -- '2024-01' — time bucketing
+  trip_id       BIGINT,       -- Snowflake (sortable by time)
+  driver_id     BIGINT,
+  pickup_loc    TEXT,
+  dropoff_loc   TEXT,
+  fare          DECIMAL,
+  rating        INT,
+  PRIMARY KEY ((user_id, year_month), trip_id)
+) WITH CLUSTERING ORDER BY (trip_id DESC);
+
+Partition key: (user_id, year_month)
+→ Distributes load across nodes. Single user's entire history
+  in one partition = hot spot. year_month bucketing avoids this.
+
+Clustering key: trip_id DESC
+→ Most recent trips returned first without sorting overhead</pre>
+
+  <h3>Trip ID — Why Snowflake</h3>
+  <pre>Option 1: UUID (random) → not sortable, no time info, index fragmentation
+Option 2: created_at    → server-side clock drift 10-100ms across pods
+                         → two trips at same ms = ambiguous ordering
+Option 3: Snowflake ID  → 41-bit timestamp (ms precision)
+                         → 10-bit machine ID
+                         → 12-bit sequence (4096 IDs/ms/machine)
+                         → globally unique, time-sortable, cross-server ordering = best-effort</pre>
+
+  <div class="insight">
+    <strong>Two-Tier Trip Storage</strong>
+    PostgreSQL holds ACTIVE trips only (currently in-progress or completed within last 24hrs). A background job moves COMPLETED trips to Cassandra. This keeps PostgreSQL lean — ~100K active trips at peak = 200MB. PostgreSQL never grows unboundedly.
+  </div>
+</div>
+
+<!-- TAB 6: MATCHING -->
+<div class="tab-content">
+  <h2>Matching Logic + Delivery Guarantees</h2>
+
+  <h3>Matching Algorithm — Step by Step</h3>
+  <div class="step-flow">
+    <div class="step"><div class="step-num">1</div><span>Get rider lat/lng from booking request</span></div>
+    <div class="step-arrow">↓</div>
+    <div class="step"><div class="step-num">2</div><span>GEORADIUS query on Redis — sorted by distance ASC, fetch top 10 within 5km</span></div>
+    <div class="step-arrow">↓</div>
+    <div class="step"><div class="step-num">3</div><span>Filter: remove drivers with status = "on_trip" (Redis flag or PostgreSQL check)</span></div>
+    <div class="step-arrow">↓</div>
+    <div class="step"><div class="step-num">4</div><span>Bonus inclusion: drivers whose current trip ends within 2 mins and are nearby (improves matching rate)</span></div>
+    <div class="step-arrow">↓</div>
+    <div class="step"><div class="step-num">5</div><span>Dispatch ride request notification to top 3 nearest available drivers simultaneously via Notification Service</span></div>
+    <div class="step-arrow">↓</div>
+    <div class="step"><div class="step-num">6</div><span>First driver to accept → atomic update: Redis flag = "on_trip" + PostgreSQL trip record created (SELECT FOR UPDATE)</span></div>
+    <div class="step-arrow">↓</div>
+    <div class="step"><div class="step-num">7</div><span>Cancel pending requests to other 2 drivers via Notification Service</span></div>
+    <div class="step-arrow">↓</div>
+    <div class="step"><div class="step-num">8</div><span>Notify rider of match with driver ETA</span></div>
+  </div>
+
+  <h3>Timeout Handling</h3>
+  <pre>No driver accepts within 30s:
+  Tier 1: 2km → wait 30s
+  Tier 2: 5km → wait 30s
+  Tier 3: 10km → wait 30s
+  Tier 4: city-wide → wait 60s → queue rider, notify when driver available</pre>
+
+  <h3>Failure Points + Fixes</h3>
+  <table>
+    <tr><th>#</th><th>Failure Point</th><th>Fix</th></tr>
+    <tr><td>1</td><td>Driver accepts but network drops before server gets ACK</td><td>Idempotency key on accept request (trip_id + driver_id). Retry safe — second accept is no-op if trip already matched.</td></tr>
+    <tr><td>2</td><td>Two drivers accept simultaneously (race condition)</td><td>SELECT FOR UPDATE on trip row in PostgreSQL. Second driver's transaction waits, sees status = MATCHED, returns "ride already taken".</td></tr>
+    <tr><td>3</td><td>Matching Service crashes mid-dispatch</td><td>Ride requests published to Kafka before dispatch. On recovery, Matching Service consumes from queue. No lost requests. Rider sees "Finding your ride..."</td></tr>
+    <tr><td>4</td><td>No drivers in any radius tier</td><td>Rider added to waiting queue (Redis sorted set by wait time). When driver becomes available nearby, dequeue and attempt match.</td></tr>
+    <tr><td>5</td><td>Payment Service down at trip completion</td><td>Trip marked COMPLETED. Payment event queued in Kafka. Retried with exponential backoff. Idempotency key = trip_id prevents double charge.</td></tr>
+  </table>
+
+  <div class="insight">
+    <strong>Why Top 3 Simultaneously, Not Sequential</strong>
+    Sequential dispatch: send to driver 1, wait 15s for decline, then send to driver 2 = 30-45s total for a match. Simultaneous dispatch to top 3: first to accept = matched, others cancelled. Rider gets match in &lt;5s. Tradeoff: slightly more notifications sent, but dramatically better user experience.
+  </div>
+</div>
+
+<!-- TAB 7: GEO-INDEXING -->
+<div class="tab-content">
+  <h2>Geo-Indexing Strategies</h2>
+
+  <div class="insight">
+    <strong>This is the Core Technical Differentiator</strong>
+    Every Uber system design question will probe how you index geography. Know Geohash deeply. Know QuadTree as a named tradeoff. Don't confuse them.
+  </div>
+
+  <h3>Geohash vs QuadTree</h3>
+  <table>
+    <tr><th></th><th>Geohash</th><th>QuadTree</th></tr>
+    <tr><td>What it is</td><td>Encodes lat/lng into a base32 string. Proximity = shared string prefix. "ttmf" and "ttmg" are adjacent cells.</td><td>Recursively subdivides the map into 4 quadrants. Subdivides further where density is high.</td></tr>
+    <tr><td>Strength</td><td>Simple, Redis-native (Redis GEO uses Geohash internally). Prefix queries = fast proximity search.</td><td>Handles uneven driver density. Mumbai CBD vs rural Maharashtra get different cell sizes automatically.</td></tr>
+    <tr><td>Weakness</td><td>Cell boundary problem: two drivers 50m apart on opposite sides of a cell boundary have no shared prefix — GEORADIUS misses one unless you query 9 cells.</td><td>Complex to build and maintain. Not available as a primitive in Redis or any standard DB. Custom implementation required.</td></tr>
+    <tr><td>SDE2 choice</td><td><span class="badge badge-green">Use Geohash + Redis GEO</span></td><td><span class="badge badge-amber">Mention as known tradeoff</span></td></tr>
+  </table>
+
+  <h3>Geohash Precision Table</h3>
+  <pre>Length  Cell size     Use case
+  4       ~40km × 20km  Country-level
+  5       ~5km  × 5km   District-level
+  6       ~1.2km × 0.6km  City-block level  ← Use this for ride matching
+  7       ~150m × 75m   Street-level</pre>
+
+  <h3>Cell Boundary Fix</h3>
+  <pre>Problem: Driver at edge of cell A, Rider at edge of adjacent cell B
+         → GEORADIUS on cell A misses the driver in cell B
+
+Fix: Query current cell + 8 surrounding cells
+     GEORADIUS already handles this — it queries by radius, not by cell
+     The "9 cell" problem is only if you use raw Geohash prefix matching.
+     With Redis GEORADIUS, you specify radius in km → it handles boundaries.</pre>
+
+  <h3>Write Amplification</h3>
+  <pre>500K drivers × 1 update/4s = 125K Redis GEO writes/sec
+
+Redis handles this on a single node (Redis benchmark: 200K+ ops/sec on commodity hardware).
+Add Redis Cluster for horizontal scaling if needed.
+Each GEOADD is O(log N) where N = number of drivers in the sorted set.
+At 500K drivers: log2(500K) ≈ 19 operations → still sub-ms.</pre>
+
+  <div class="warn">
+    <strong>Common Mistake</strong>
+    Saying "Google Maps API for matching." Google Maps is for route calculation and ETA (external dependency). It cannot index 500K live driver locations or do sub-ms proximity queries. The geo-indexing of drivers is your system's responsibility. Never outsource the core technical problem.
+  </div>
+</div>
+
+<!-- TAB 8: SURGE -->
+<div class="tab-content">
+  <h2>Surge Pricing</h2>
+  <p style="color:var(--muted)">Mention in requirements as out of scope for deep design, but know how it works at a component level.</p>
+
+  <div class="insight">
+    <strong>SDE2 Framing</strong>
+    "Surge pricing is essentially a real-time demand/supply ratio calculator per geographic cell. I'd keep it as a separate Fare Service responsibility with a cached surge multiplier per geohash cell."
+  </div>
+
+  <h3>How Surge is Computed</h3>
+  <pre>Demand  = active ride requests in geohash cell (last 5 mins)
+Supply  = available drivers in geohash cell (Redis GEO count)
+
+Surge ratio = Demand / Supply
+
+Multiplier tiers:
+  ratio < 1.5  → 1.0x (no surge)
+  1.5 – 2.5   → 1.5x
+  2.5 – 4.0   → 2.0x
+  > 4.0        → 2.5x (capped)</pre>
+
+  <h3>Where Surge Lives</h3>
+  <pre>Fare Service queries:
+  1. Redis GEO COUNT in 5km radius of pickup → driver supply
+  2. Trip Service → pending ride requests in area → demand
+  3. Computes ratio → looks up multiplier table
+  4. Caches result: surge:{geohash6}  TTL=30s
+
+On next fare request for same cell → cache hit, no recompute
+Background job refreshes cache every 30s per active geohash cell</pre>
+
+  <h3>Failure Handling</h3>
+  <pre>Surge cache stale during sudden spike:
+  → Rider pays 1.0x for ~30s until cache refreshes
+  → Acceptable — eventual consistency is fine for pricing
+  → Not financial data, no ACID needed here
+
+Surge cache miss (Redis restart):
+  → Default to 1.0x multiplier
+  → Background worker repopulates within 30s</pre>
+
+  <div class="warn">
+    <strong>Out of Scope for SDE2</strong>
+    ML-based surge prediction, city-level demand forecasting, driver incentive programs during surge, regulatory surge caps by city. Mention these exist but don't design them unless asked.
+  </div>
+</div>
+
+<!-- TAB 9: LIFECYCLE -->
+<div class="tab-content">
+  <h2>Ride Lifecycle + State Machine</h2>
+
+  <h3>State Transitions</h3>
+  <pre>REQUESTED → MATCHED → DRIVER_EN_ROUTE → RIDER_PICKED_UP → IN_PROGRESS → COMPLETED
+                                                                        ↘ CANCELLED</pre>
+
+  <table>
+    <tr><th>State</th><th>Trigger</th><th>DB Update</th><th>Notification</th></tr>
+    <tr><td>REQUESTED</td><td>Rider books</td><td>INSERT trip row</td><td>None</td></tr>
+    <tr><td>MATCHED</td><td>Driver accepts</td><td>UPDATE status, SET driver_id</td><td>Rider: "Driver found"</td></tr>
+    <tr><td>DRIVER_EN_ROUTE</td><td>Driver starts navigation</td><td>UPDATE status</td><td>Rider: ETA shown</td></tr>
+    <tr><td>RIDER_PICKED_UP</td><td>Driver taps "Arrived"</td><td>UPDATE status, SET pickup_at</td><td>Rider: "Trip started"</td></tr>
+    <tr><td>IN_PROGRESS</td><td>Trip underway</td><td>No change, GPS logging to S3</td><td>Live location tracking</td></tr>
+    <tr><td>COMPLETED</td><td>Driver taps "End trip"</td><td>UPDATE status, SET fare, completed_at</td><td>Both: fare summary</td></tr>
+    <tr><td>CANCELLED</td><td>Rider/Driver cancels</td><td>UPDATE status, SET cancelled_by</td><td>Both: cancel notification</td></tr>
+  </table>
+
+  <h3>Failure at Each State</h3>
+  <table>
+    <tr><th>Failure</th><th>Recovery</th></tr>
+    <tr><td>REQUESTED → MATCHED: no drivers in 5 mins</td><td>Auto-cancel, notify rider, suggest retry or scheduled ride</td></tr>
+    <tr><td>MATCHED → DRIVER_EN_ROUTE: driver cancels</td><td>Re-enter REQUESTED state, re-match. Cancellation logged for driver rating.</td></tr>
+    <tr><td>IN_PROGRESS: driver app crashes</td><td>Last known GPS state preserved in Redis. Trip stays IN_PROGRESS. Fare calculated from last GPS point on reconnect or timeout.</td></tr>
+    <tr><td>COMPLETED → payment fails</td><td>Trip stays COMPLETED. Payment event queued in Kafka. Retried async. User sees "Payment processing." Idempotency key = trip_id.</td></tr>
+    <tr><td>Any state: server crashes</td><td>Trip state is in PostgreSQL (durable). On recovery, Trip Service re-reads state. Idempotent transitions.</td></tr>
+  </table>
+
+  <div class="insight">
+    <strong>Idempotency Everywhere</strong>
+    All state transitions use trip_id as idempotency key. A driver clicking "End trip" twice = second click finds status already COMPLETED = no-op. No double-fare. This is the industry standard pattern for ride lifecycle management.
+  </div>
+
+  <h3>Cancellation Fee Logic</h3>
+  <pre>Rider cancels AFTER driver en route (> 2 mins into en route):
+  → Fare Service: cancellation_fee = base_fee (₹50 typically)
+  → Trip marked CANCELLED with cancellation_fee recorded
+  → Payment Service charged asynchronously via Kafka
+
+Driver cancels after match:
+  → No fee to rider
+  → Cancellation logged, affects driver's cancellation rate metric
+  → Auto-re-match if within 5 mins of original request</pre>
+</div>
+
+<!-- TAB 10: TRADEOFFS -->
+<div class="tab-content">
+  <h2>Tradeoffs</h2>
+  <p style="color:var(--muted);margin-bottom:20px">Five tradeoffs FAANG will probe. Know the comparison, know your choice, know the caveat.</p>
+
+  <h3>1. WebSocket vs HTTP Polling for Location</h3>
+  <table>
+    <tr><th></th><th>HTTP Polling (4s interval)</th><th>WebSocket</th></tr>
+    <tr><td>Bandwidth</td><td>125K full HTTP requests/sec. Headers + auth + body each time.</td><td>Persistent connection. Only payload sent after handshake.</td></tr>
+    <tr><td>Latency</td><td>Up to 4s stale location (poll interval)</td><td>Server pushes immediately on update. Sub-second.</td></tr>
+    <tr><td>Scaling</td><td>Stateless — any server handles any request</td><td>Stateful — sticky sessions or connection registry needed</td></tr>
+    <tr><td>Failure visibility</td><td>Server never knows client is gone until next missed poll</td><td>TCP close event or heartbeat timeout — faster detection</td></tr>
+    <tr><td><strong>Verdict</strong></td><td colspan="2"><span class="badge badge-green">WebSocket wins</span> — the bandwidth savings alone justify the statefulness cost at 500K drivers.</td></tr>
+  </table>
+
+  <h3>2. Geohash vs QuadTree</h3>
+  <table>
+    <tr><th></th><th>Geohash</th><th>QuadTree</th></tr>
+    <tr><td>Density handling</td><td>Fixed cell sizes — Mumbai and Dharwad get same cell size</td><td>Dynamic subdivision — Mumbai gets smaller cells (more drivers)</td></tr>
+    <tr><td>Implementation</td><td>Redis-native, zero custom code</td><td>Custom tree structure, maintenance burden</td></tr>
+    <tr><td>Boundary edge case</td><td>Requires querying 9 cells (current + 8 neighbors) to be safe</td><td>Handled naturally by tree traversal</td></tr>
+    <tr><td>SDE2 verdict</td><td><span class="badge badge-green">Geohash</span></td><td>Known tradeoff, mention for Staff-level</td></tr>
+  </table>
+
+  <h3>3. Redis GEO vs PostGIS for Driver Location</h3>
+  <table>
+    <tr><th></th><th>Redis GEO</th><th>PostGIS (PostgreSQL extension)</th></tr>
+    <tr><td>Speed</td><td>In-memory, sub-ms writes and reads</td><td>Disk-based, ~10ms for indexed geo queries</td></tr>
+    <tr><td>TTL support</td><td>Native — key auto-expires. Zombie drivers auto-removed.</td><td>No TTL. Need cron job to clean stale location rows.</td></tr>
+    <tr><td>Query richness</td><td>GEORADIUS, GEODIST, GEOPOS — sufficient for matching</td><td>Full spatial SQL: polygons, intersections, complex geo joins</td></tr>
+    <tr><td>Durability</td><td>In-memory (AOF/RDB for persistence, but not primary)</td><td>Full ACID durability</td></tr>
+    <tr><td>Verdict</td><td><span class="badge badge-green">Redis GEO</span> — location is ephemeral, durability is wasteful</td><td>Use for analytics, historical geo queries, NOT real-time</td></tr>
+  </table>
+
+  <h3>4. Fan-out on Write vs Read for Driver Dispatch</h3>
+  <table>
+    <tr><th></th><th>Fan-out on Write (top 3)</th><th>Broadcast to All Nearby</th></tr>
+    <tr><td>What it is</td><td>Send request to 3 nearest drivers only</td><td>Broadcast to all drivers in radius</td></tr>
+    <tr><td>Notification cost</td><td>3 pushes per ride request</td><td>Could be 50-100 pushes per ride request</td></tr>
+    <tr><td>Driver experience</td><td>Driver gets relevant nearby requests</td><td>Drivers far away get requests they'll decline</td></tr>
+    <tr><td>Verdict</td><td><span class="badge badge-green">Top 3 wins</span></td><td>Acceptable for low-density areas, but wasteful at scale</td></tr>
+  </table>
+
+  <h3>5. PostgreSQL vs Cassandra for Trip Data</h3>
+  <table>
+    <tr><th></th><th>PostgreSQL (active trips)</th><th>Cassandra (history)</th></tr>
+    <tr><td>Why use</td><td>ACID for driver assignment. Relational joins. Low volume (100K active).</td><td>Append-only, time-range queries by user, 3.65TB/year scales horizontally.</td></tr>
+    <tr><td>Failure mode</td><td>B-Tree degrades at 10B+ rows. Don't store history here.</td><td>No transactions. Can't use for active trip state management.</td></tr>
+    <tr><td>Verdict</td><td>Active trips only. Move to Cassandra after completion.</td><td>Historical trips only. Not for active state.</td></tr>
+  </table>
+  <div class="insight">
+    <strong>Not Either/Or</strong>
+    Use BOTH. PostgreSQL for active trips (ACID, small dataset), Cassandra for historical trips (scale, append-only). Background job migrates completed trips. This is the industry-standard two-tier pattern.
+  </div>
+</div>
+
+<!-- TAB 11: FAILURES -->
+<div class="tab-content">
+  <h2>Failure Scenarios</h2>
+  <p style="color:var(--muted);margin-bottom:20px">FAANG expects 2-3 failures handled. Scoring bonus for detection + mitigation both covered.</p>
+
+  <div class="req-box" style="margin-bottom:16px">
+    <h4 style="color:#ef4444">Failure 1 — Driver App Crashes Mid-Ride</h4>
+    <p><strong style="color:var(--text)">Detection:</strong> Location Service detects no WebSocket heartbeat for 30s. Redis TTL on driver location key expires.</p>
+    <p><strong style="color:var(--text)">Mitigation:</strong> Last known location cached and displayed to rider. Trip stays IN_PROGRESS (no auto-cancel — driver may reconnect). Grace period: 30s to reconnect. If reconnects → resumes normally. If not → if trip not started, discard driver and re-match. If trip in progress → flag trip for manual review + GPS reconstruction from last known state.</p>
+  </div>
+
+  <div class="req-box" style="margin-bottom:16px">
+    <h4 style="color:#ef4444">Failure 2 — Matching Service Crashes</h4>
+    <p><strong style="color:var(--text)">Detection:</strong> Zookeeper health check on Matching Service instances. API Gateway returns 503 if all instances down.</p>
+    <p><strong style="color:var(--text)">Mitigation:</strong> Ride requests published to Kafka before Matching Service processes them. On service recovery, consumer group picks up from last committed offset. Rider sees "Finding your ride..." — not an error. No lost requests. Kafka retention = 24hrs buffer.</p>
+  </div>
+
+  <div class="req-box" style="margin-bottom:16px">
+    <h4 style="color:#ef4444">Failure 3 — Redis GEO Data Lost (Node Restart)</h4>
+    <p><strong style="color:var(--text)">Detection:</strong> Redis restart event. Location Service connection pool gets reset.</p>
+    <p><strong style="color:var(--text)">Mitigation:</strong> Drivers re-register location on next heartbeat ping (within 4s). 4-second recovery window per driver. Brief matching gap acceptable — ride requests during this window get queued in Kafka and retried. Enable Redis AOF persistence to minimize data loss on restart. Alternatively, Redis Cluster with replication.</p>
+  </div>
+
+  <div class="req-box" style="margin-bottom:16px">
+    <h4 style="color:#ef4444">Failure 4 — Payment Service Down at Trip Completion</h4>
+    <p><strong style="color:var(--text)">Detection:</strong> Fare Service gets timeout/500 from Payment Service.</p>
+    <p><strong style="color:var(--text)">Mitigation:</strong> Trip marked COMPLETED in PostgreSQL (trip state is separate from payment state). Payment event published to Kafka with idempotency key = trip_id. Payment Worker retries with exponential backoff (1s, 2s, 4s, 8s... up to 24hrs). Rider sees "Payment processing" in app. Double-charge prevented by idempotency key — retries are safe.</p>
+  </div>
+
+  <div class="req-box" style="margin-bottom:16px">
+    <h4 style="color:#ef4444">Failure 5 — No Drivers in Any Radius</h4>
+    <p><strong style="color:var(--text)">Detection:</strong> Matching Service gets 0 results after all radius expansion tiers exhausted.</p>
+    <p><strong style="color:var(--text)">Mitigation:</strong> Rider added to waiting queue (Redis sorted set, key = geohash, score = timestamp for FIFO). When any driver in the area completes a trip or comes online → trigger match attempt against queue. Rider receives ETA notification ("No drivers nearby. We'll notify you when one becomes available.") Don't fail immediately — demand spikes resolve within minutes.</p>
+  </div>
+
+  <div class="warn">
+    <strong>Failure Anti-Pattern</strong>
+    Never say "the system fails gracefully." Explain exactly HOW it fails gracefully: what detects the failure, what the user sees, how state is preserved or recovered, and what prevents data loss or double-processing.
+  </div>
+</div>
+
+<!-- TAB 12: Q&A -->
+<div class="tab-content">
+  <h2>Q&amp;A — Interview Flashcards</h2>
+  <p style="color:var(--muted);margin-bottom:20px">Click to reveal answer. These are the exact questions FAANG interviewers ask after you finish your design.</p>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">1. Why Redis GEO over PostGIS for driver location? <span class="chevron">›</span></div>
+    <div class="qa-a">Three reasons: (1) In-memory — sub-ms reads and writes vs ~10ms for disk-based PostGIS. At 125K writes/sec, the 10ms latency compounds to 1250 server-seconds of added wait per second. (2) Native TTL — Redis auto-expires stale driver keys after 30s. PostGIS needs a cron job to clean stale rows. (3) Location data is ephemeral — 30-second-old GPS is useless. Paying for ACID durability on data you discard is the wrong tradeoff.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">2. Why WebSocket over HTTP polling for location updates? <span class="chevron">›</span></div>
+    <div class="qa-a">Polling at 4s interval across 500K drivers = 125K HTTP requests/sec. Each HTTP request carries full headers, auth tokens, and requires a TCP connection — even keep-alive connections have overhead. WebSocket: one connection per driver, established once at login, server pushes location data through it. Zero reconnect cost. Bandwidth drops by ~80%. Tradeoff: WebSocket is stateful — requires sticky sessions or Redis connection registry. Worth it at this scale.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">3. Why SELECT FOR UPDATE when assigning a driver? Can't you handle this in application code? <span class="chevron">›</span></div>
+    <div class="qa-a">No. With 10+ Matching Service pods, two pods can receive two different ride requests for the same driver simultaneously. Application-level checks ("check if driver is available, then assign") are not atomic — both pods read "available," both assign. This is a classic TOCTOU race condition. SELECT FOR UPDATE acquires a row-level lock in PostgreSQL: first transaction wins, second sees the lock and waits until the first commits, then sees status = "matched" and aborts. Database lock = the only correct solution across multiple pods.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">4. Why TTL on driver location key instead of explicit offline marking? <span class="chevron">›</span></div>
+    <div class="qa-a">Explicit offline marking requires the client to send a clean disconnect signal. But apps crash, phones die, networks drop — the clean disconnect never happens. TTL is self-healing: if the server doesn't hear from the driver in 30s, the key expires automatically. No cron job, no explicit cleanup, no zombie drivers staying "online" indefinitely. The heartbeat ping IS the keepalive. Stopping pings = auto-offline. This is the TTL-as-health-signal pattern.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">5. Why dispatch to top 3 drivers simultaneously instead of sequentially? <span class="chevron">›</span></div>
+    <div class="qa-a">Sequential: send to driver 1, wait 15s for response, then driver 2, wait 15s, then driver 3 = up to 45 seconds for a match. Rider abandons the app. Simultaneous: all 3 get request at once, first to accept = matched, others cancelled. Match time drops to under 5 seconds. Tradeoff: 3x notifications sent vs 1x. But push notifications are cheap (~0.01ms/notification), and matching speed is the core product metric. Always choose user experience over marginal notification cost.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">6. Why Geohash and not QuadTree for SDE2 scope? <span class="chevron">›</span></div>
+    <div class="qa-a">Geohash is Redis-native (Redis GEO uses it internally), requires zero custom code, and GEORADIUS handles proximity queries correctly by radius rather than by cell — the boundary problem is handled. QuadTree is operationally superior for highly uneven density (Mumbai vs rural Maharashtra), but requires a custom in-memory tree implementation, a service to maintain it, and logic to handle dynamic subdivision. At SDE2 scope, Geohash + Redis GEO solves the problem correctly. QuadTree is the Staff-level optimization when you have dedicated infra teams to maintain it.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">7. What happens if two riders request the same driver at the same time? <span class="chevron">›</span></div>
+    <div class="qa-a">Matching Service dispatches to driver from both ride requests. Driver accepts one. Trip Service processes: SELECT FOR UPDATE on driver row in PostgreSQL. First transaction commits, sets driver status = "matched" with rider A's trip_id. Second transaction reads status = "matched" → returns error to Matching Service → Matching Service re-runs matching for rider B with the driver excluded from candidates. Rider B gets the next nearest available driver. Total extra latency for rider B: ~100-200ms for the retry. No double assignment possible.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">8. Why move completed trips to Cassandra instead of keeping everything in PostgreSQL? <span class="chevron">›</span></div>
+    <div class="qa-a">Two reasons: (1) Scale — 20M trips/day = 7.3B trips/year. PostgreSQL B-Tree indexes degrade significantly past 100M rows per table. Query performance degrades. VACUUM and maintenance become expensive. (2) Access patterns change after completion — completed trips are append-only, read by user_id + time range. No joins, no updates. Cassandra's partition key (user_id, year_month) routes these queries directly to the right node without full scans. PostgreSQL excels at complex queries with joins — waste it on historical time-range reads.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">9. Why is surge computed per geohash cell and not globally? <span class="chevron">›</span></div>
+    <div class="qa-a">Demand/supply imbalance is geographic. Indiranagar (Bangalore) might have 10x demand over supply during an IPL match while 5km away in Whitefield there are 3x more drivers than riders. A global surge multiplier would overcharge Whitefield riders and undercharge Indiranagar riders. Geohash-cell surge (6-character precision ≈ 1.2km) correctly captures local demand. Each cell maintains its own demand/supply ratio, independently cached in Redis with 30s TTL.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">10. How do you handle driver location data during a Redis restart? <span class="chevron">›</span></div>
+    <div class="qa-a">Three-layer defense: (1) Redis AOF persistence — log every write to disk, replay on restart. Recovery time: seconds, not minutes. (2) Driver re-registration — drivers ping location every 4s. Even without AOF, full location state is rebuilt within 4 seconds as all drivers send their next heartbeat. (3) Kafka buffer — ride requests during the brief gap are queued in Kafka and retried when Redis recovers. The 4-second re-registration window means a brief matching gap, not a system outage.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">11. Why is the Matching Service stateless even though it reads from Redis? <span class="chevron">›</span></div>
+    <div class="qa-a">Stateless means: no per-request session stored on the server instance itself. Matching Service reads from Redis (external state store) and writes to PostgreSQL. It holds no in-memory state between requests. Any pod can handle any ride request — there's no "this request must go to pod 3." This is the definition of stateless: all state is externalized. Contrast with Location Service, which holds open WebSocket connections per driver — that IS stateful because the connection lives on a specific pod instance.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">12. What happens if the Fare Service is down when a trip completes? <span class="chevron">›</span></div>
+    <div class="qa-a">Trip Service marks trip as COMPLETED in PostgreSQL. Fare calculation event is published to Kafka (trip_id, distance, route, surge_multiplier). Fare Worker consumes this event, calls Fare Service (retries until available), writes fare back to trip record. Idempotency key = trip_id ensures even if Fare Worker runs twice, fare is calculated once. Rider sees "Calculating fare..." until Fare Service recovers. No trip is left without a fare — Kafka retention guarantees the event is processed eventually.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">13. Why not use Google Maps API as the matching system? <span class="chevron">›</span></div>
+    <div class="qa-a">Google Maps Distance Matrix API is for route calculation and ETA — it accepts origin/destination and returns driving time/distance. It cannot: (1) Index 500K live driver GPS positions in real time, (2) Answer "give me the 10 nearest available drivers to this point" in sub-100ms, (3) Handle 125K location update writes per second. The geo-indexing of live driver locations is the core technical problem of your system — it's what you're building. Google Maps is an external dependency for route ETA after the driver is matched. Never outsource your primary technical challenge to a third-party API.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">14. How do you prevent a driver from being double-assigned across two concurrent ride requests? <span class="chevron">›</span></div>
+    <div class="qa-a">Database-level row locking via SELECT FOR UPDATE on the driver's record in PostgreSQL. Flow: Matching Service sends accept request → Trip Service starts PostgreSQL transaction → SELECT driver WHERE driver_id = X FOR UPDATE → checks status = "available" → if yes, sets status = "matched" + creates trip record → commits. Second concurrent request for same driver → SELECT FOR UPDATE blocks until first transaction commits → reads status = "matched" → aborts with "driver unavailable" → Matching Service re-queries Redis GEO for next nearest driver. No application-level code can replicate this atomicity across distributed pods.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">15. Why pessimistic locking over optimistic locking for driver assignment? <span class="chevron">›</span></div>
+    <div class="qa-a">Optimistic locking works — on conflict, move to next driver on the cached top-3 list. But under surge, all 10 Matching Service pods get the same top-N driver list from Redis GEO. Simultaneous conflicts drain that list in milliseconds, and the Redis snapshot gets stale. Pessimistic lock blocks for 2–3ms and reads fresh state — cleaner under high contention. The real cost comparison: optimistic = cascading retries under load. Pessimistic = 2-3ms block. Under surge, pessimistic wins. Livelock risk with optimistic under high contention — pods keep retrying but never succeed as candidate list drains faster than they can assign.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">16. Why is ride_requests table separate from trips table? <span class="chevron">›</span></div>
+    <div class="qa-a">Not every booking request gets a driver. If we create a trips row on every booking, unfulfilled requests become garbage rows — no driver found, request timed out, but row remains. Two-table solution: ride_requests for short-lived pending state (30s TTL, then auto-expired), trips for confirmed rides only. Race condition still handled: atomic UPDATE on ride_requests WHERE status=PENDING — first driver to update wins, others see 0 rows updated. trips table stays clean with zero garbage rows and no cleanup job needed.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">17. How does a ride request actually reach the driver's phone? Full path. <span class="chevron">›</span></div>
+    <div class="qa-a">Matching Service → Redis registry lookup: driver_42 → Pod A (DNS). Matching Service → Kafka publish (key = Pod A). Pod A subscribes to its own Kafka partition. Pod A consumes message. payload.driver_id = 42. Pod A checks connectionMap.get(42) → WebSocket object. ws.send(ride_request) → Driver phone. On rebalancing: Kafka fires onPartitionsAssigned() callback → Pod A refreshes Redis registry for all its connected drivers. Self-healing, no manual update needed.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">18. Why Kafka partition key = Pod ID (not Driver ID)? <span class="chevron">›</span></div>
+    <div class="qa-a">Driver ID as key: partition is fixed, but the pod consuming that partition changes on rebalancing. Driver 42 is always in Partition 7, but after rebalancing, Pod D consumes Partition 7 — not Pod A where Driver 42 is actually connected. Pod ID as key: Matching Service looks up Redis (driver_42 → Pod A), publishes Kafka message with key=Pod A. Pod A subscribes to its own partition. Message arrives at Pod A exactly — where Driver 42 is connected. On rebalancing, onPartitionsAssigned() refreshes Redis: driver_42 → Pod A (fresh). Self-healing.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">19. Why does Trip Service act as a central orchestrator (Saga pattern)? <span class="chevron">›</span></div>
+    <div class="qa-a">Trip lifecycle spans multiple services: Matching (find driver), Location (en-route tracking), Fare (calculate), Payment (charge), Profile (rating update). Trip Service orchestrates all state transitions — REQUESTED → MATCHED → EN_ROUTE → COMPLETED. Each transition calls the relevant downstream service. On failure, Trip Service handles compensating transactions: payment failed → refund trigger, driver cancelled → re-match. This is the Saga orchestration pattern. Alternative is choreography (each service emits events, others react) but orchestration is clearer for a lifecycle with clear sequence and rollback requirements.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">20. Why not store driver location in PostgreSQL/MySQL? <span class="chevron">›</span></div>
+    <div class="qa-a">125K writes/sec. PostgreSQL max comfortable throughput is ~10–40K writes/sec under ideal conditions. Even at 40K, you are at 3x capacity immediately at peak. More importantly: location data is ephemeral — 30-second-old GPS coordinates are useless. Paying for ACID, WAL, disk flush durability on data you discard in 30 seconds is architecturally wrong. Redis GEO: in-memory (sub-ms), native TTL (auto-expires stale drivers), GEORADIUS query returns sorted nearby results in single command. SQL needs a full index scan + cleanup cron job. Wrong tool entirely.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">21. What is Kafka consumer lag and why is it the best early warning metric? <span class="chevron">›</span></div>
+    <div class="qa-a">Kafka lag = latest partition offset minus consumer's last committed offset. Normal: lag 0–10. Warning: lag 1000 (service slowing). Critical: lag 10000 (users about to feel it). The lag does not spike to 10K instantly — it grows. That growth trend gives you 10+ minutes to act before rider impact. Why better than CPU: CPU spike could be a normal burst. Growing Kafka lag means the service is systematically falling behind — it will cascade. CPU measures instantaneous state. Lag measures trajectory. SDE2 monitors trajectory, not state.</div>
+  </div>
+
+  <div class="qa-item">
+    <div class="qa-q" onclick="toggleQA(this)">22. Driver loses network for 8 seconds (tunnel). What happens? <span class="chevron">›</span></div>
+    <div class="qa-a">T=0: network drops. TCP connection to Pod B dies. T=5s: Pod B detects dead connection via TCP keepalive timeout. Pod B removes driver_42 from its local connectionMap. Does NOT touch Redis (TTL handles cleanup). T=0–8s: No heartbeat. Redis TTL counting down. But 8s &lt; 35s → key still alive in Redis. T=8s: Driver reconnects. NEW TCP connection (TCP does not resume — it dies and is recreated). LB assigns to Pod D. Pod D onConnect() → connectionMap.set(42, newWS) → Redis.SET driver:42:pod = Pod-D EX 35. Heartbeat resumes. Self-healed. Old Pod B entry overwritten, not manually deleted.</div>
+  </div>
+</div>
+
+<!-- TAB 13: RUBRIC -->
+<div class="tab-content">
+  <h2>FAANG SDE2 Rubric + Red Flags</h2>
+
+  <h3>SDE2 Score Bars</h3>
+  <div class="rubric-bar"><div class="rubric-label">Requirements</div><div class="rubric-track"><div class="rubric-fill" style="width:90%"></div></div><div class="rubric-score">9/10</div></div>
+  <p style="margin-left:142px;margin-top:-6px;font-size:12px">Functional + non-functional covered. Misc separated. Scope clarified before designing.</p>
+
+  <div class="rubric-bar"><div class="rubric-label">Numbers</div><div class="rubric-track"><div class="rubric-fill" style="width:85%"></div></div><div class="rubric-score">8/10</div></div>
+  <p style="margin-left:142px;margin-top:-6px;font-size:12px">125K writes/sec derived correctly. Read:write ratio stated. Why SQL fails — quantified.</p>
+
+  <div class="rubric-bar"><div class="rubric-label">Components</div><div class="rubric-track"><div class="rubric-fill" style="width:80%"></div></div><div class="rubric-score">8/10</div></div>
+  <p style="margin-left:142px;margin-top:-6px;font-size:12px">Each service justified, not just named. Stateful vs stateless split stated explicitly.</p>
+
+  <div class="rubric-bar"><div class="rubric-label">DB Choice</div><div class="rubric-track"><div class="rubric-fill" style="width:90%"></div></div><div class="rubric-score">9/10</div></div>
+  <p style="margin-left:142px;margin-top:-6px;font-size:12px">Redis GEO with reasoning. PostgreSQL + Cassandra two-tier justified. Right DB for each access pattern.</p>
+
+  <div class="rubric-bar"><div class="rubric-label">Failures</div><div class="rubric-track"><div class="rubric-fill" style="width:75%"></div></div><div class="rubric-score">7/10</div></div>
+  <p style="margin-left:142px;margin-top:-6px;font-size:12px">At least 2-3 failures with detection + mitigation. Not just "system retries."</p>
+
+  <div class="rubric-bar"><div class="rubric-label">Tradeoffs</div><div class="rubric-track"><div class="rubric-fill" style="width:80%"></div></div><div class="rubric-score">8/10</div></div>
+  <p style="margin-left:142px;margin-top:-6px;font-size:12px">Geohash vs QuadTree, WebSocket statefulness cost, PostgreSQL vs Cassandra lifecycle split.</p>
+
+  <h3>Interview Time Guide</h3>
+  <div class="time-guide">
+    <div class="time-box"><div class="mins">2</div><div class="label">Requirements clarification</div></div>
+    <div class="time-box"><div class="mins">3</div><div class="label">Capacity numbers</div></div>
+    <div class="time-box"><div class="mins">3</div><div class="label">Geo-indexing decision</div></div>
+    <div class="time-box"><div class="mins">5</div><div class="label">Components + diagram</div></div>
+    <div class="time-box"><div class="mins">4</div><div class="label">Storage + schema</div></div>
+    <div class="time-box"><div class="mins">3</div><div class="label">Matching flow</div></div>
+    <div class="time-box"><div class="mins">3</div><div class="label">Failures</div></div>
+    <div class="time-box"><div class="mins">3</div><div class="label">Tradeoffs</div></div>
+    <div class="time-box"><div class="mins">1</div><div class="label">Buffer / Q&A</div></div>
+  </div>
+  <p style="color:var(--muted);font-size:12px;margin-top:8px">Total: 27 mins. Leaves 18 mins for interviewer questions in a 45-min round.</p>
+
+  <h3>Red Flags — Instant Score Killer</h3>
+  <ul class="redflag-list">
+    <li>Using Google Maps API as the matching/geo-indexing system — outsources the core technical problem</li>
+    <li>No numbers for location write QPS — the 125K/sec is the design's main constraint</li>
+    <li>SQL for driver location storage — doesn't justify why Redis GEO, or worse, picks wrong DB</li>
+    <li>Marking driver offline immediately on disconnect — flapping problem, should use TTL grace period</li>
+    <li>Application-level locking for driver assignment instead of DB-level SELECT FOR UPDATE</li>
+    <li>Fan-out to all nearby drivers instead of top 3 — notification storm, no justification</li>
+    <li>No idempotency key on driver accept request — double assignment risk on retry</li>
+    <li>Ignoring TTL for zombie driver cleanup — manual cron job is wrong answer</li>
+    <li>No radius expansion on matching timeout — fail immediately is wrong answer</li>
+    <li>Treating completed and historical trips identically in the same PostgreSQL table — B-Tree scale problem</li>
+    <li>No mention of sticky sessions problem for WebSocket scaling — misses key tradeoff</li>
+    <li>Geohash with no mention of cell boundary edge case — incomplete answer</li>
+    <li>No failure scenario for matching service crash — must cover queue-based recovery</li>
+    <li>Claiming Google Maps handles proximity matching — it handles routing, not geo-indexing</li>
+    <li>Not separating stateful Location Service from stateless Matching Service — scaling story breaks</li>
+  </ul>
+
+  <div class="insight">
+    <strong>The One Insight That Separates SDE2 from SDE1</strong>
+    SDE1 says "store driver location in a database." SDE2 says "125K location writes/sec forces an in-memory geo-indexed store with TTL-based expiry — Redis GEO. SQL cannot handle this, and durability is wasteful for ephemeral GPS data." The numbers drive the decision. The decision has a tradeoff. The tradeoff has a caveat. That chain of reasoning is the SDE2 bar.
+  </div>
+</div>
+
+<!-- TAB 14: API DESIGN -->
+<div class="tab-content">
+  <h2>API Design</h2>
+  <p style="color:var(--muted);margin-bottom:16px">Key endpoints — method, path, headers, request/response. In interview: mention versioning (v1), REST conventions, WebSocket for location updates.</p>
+
+  <h3>1. Location Update (WebSocket — not REST)</h3>
+  <pre>WebSocket: ws://api.uber.com/v1/location/driver
+Header: Authorization: Bearer &lt;token&gt;
+
+Message (every 4s from Driver App):
+{
+  "driverId": 123,
+  "lat": 12.9716,
+  "lng": 77.5946,
+  "timestamp": 1714500000
+}
+
+ACK from server: { "status": "ok" }
+
+WHY WebSocket not PUT: persistent connection, server pushes back,
+no repeated HTTP handshake overhead at 500K drivers × every 4s.</pre>
+
+  <h3>2. Get Driver Location</h3>
+  <pre>GET /v1/location/driver/{driverId}
+Header: Authorization: Bearer &lt;token&gt;
+
+Response 200:
+{
+  "driverId": 123,
+  "lat": 12.9716,
+  "lng": 77.5946,
+  "lastUpdated": "2024-01-01T10:00:00Z"
+}</pre>
+
+  <h3>3. Book a Ride</h3>
+  <pre>POST /v1/trips/book          ← POST not GET (state change)
+Header: Authorization: Bearer &lt;token&gt;
+
+Body:                         ← body not params (sensitive data)
+{
+  "riderId": 123,
+  "sourceLat": 12.9716,
+  "sourceLng": 77.5946,
+  "destLat": 13.0012,
+  "destLng": 77.6010
+}
+
+Response 201:
+{
+  "tripId": "trip_abc123",
+  "status": "REQUESTED",
+  "estimatedWait": "3 mins",
+  "estimatedFare": 150
+}</pre>
+
+  <h3>4. Driver Accept / Reject Ride</h3>
+  <pre>POST /v1/trips/{tripId}/accept
+POST /v1/trips/{tripId}/reject
+Header: Authorization: Bearer &lt;token&gt;
+Body: { "driverId": 456 }
+
+Response 200:
+{ "tripId": "trip_abc123", "status": "MATCHED" }</pre>
+
+  <h3>5. Cancel Trip</h3>
+  <pre>POST /v1/trips/{tripId}/cancel
+Header: Authorization: Bearer &lt;token&gt;
+Body:
+{
+  "cancelledBy": "rider",   ← or "driver"
+  "reason": "changed_mind"
+}
+
+Response 200:
+{
+  "tripId": "trip_abc123",
+  "status": "CANCELLED",
+  "cancellationFee": 20     ← 0 if cancelled before match
+}</pre>
+
+  <h3>6. End Trip</h3>
+  <pre>POST /v1/trips/{tripId}/complete
+Header: Authorization: Bearer &lt;token&gt;
+Body: { "driverId": 456 }
+
+Response 200:
+{
+  "tripId": "trip_abc123",
+  "status": "COMPLETED",
+  "fare": 150,
+  "distance": 12.3
+}</pre>
+
+  <h3>7. Get Trip Status</h3>
+  <pre>GET /v1/trips/{tripId}
+Header: Authorization: Bearer &lt;token&gt;
+
+Response 200:
+{
+  "tripId": "trip_abc123",
+  "status": "DRIVER_EN_ROUTE",
+  "driverId": 456,
+  "eta": "5 mins"
+}
+
+NOTE: driverLat/Lng NOT here — use GET /v1/location/driver/{id} separately.
+Single Responsibility: Trip API = metadata, Location API = coordinates.</pre>
+
+  <h3>8. Rate Trip</h3>
+  <pre>POST /v1/trips/{tripId}/rate
+Header: Authorization: Bearer &lt;token&gt;
+Body:
+{
+  "rating": 4.5,
+  "ratedBy": "rider",       ← or "driver"
+  "comment": "Great ride"
+}
+
+Response 200: { "message": "Rating submitted" }</pre>
+
+  <div class="insight">
+    <strong>REST Conventions (Interview Rule)</strong>
+    GET = read only. POST = create / trigger action. PUT = full update. PATCH = partial update. DELETE = remove. Never use GET for state-changing operations. Sensitive data (coordinates, userId) goes in body, not query params.
+  </div>
+
+  <div class="correction">
+    <strong>Common Mistake</strong>
+    Using PUT for location update → wrong. Location update is a WebSocket message, not a REST endpoint. The persistent connection eliminates 125K × HTTP handshake overhead per 4 seconds.
+  </div>
+</div>
+
+<!-- TAB 15: DB SCHEMA -->
+<div class="tab-content">
+  <h2>Database Schema</h2>
+  <p style="color:var(--muted);margin-bottom:16px">8 tables — two separate for rides (short-lived requests + permanent trips). Storage split: PostgreSQL active, MySQL profiles, SQL partitioned/S3 historical.</p>
+
+  <h3>1. riders</h3>
+  <pre>CREATE TABLE riders (
+  rider_id    UUID PRIMARY KEY,
+  name        VARCHAR(100),
+  email       VARCHAR(255) UNIQUE,
+  phone       VARCHAR(20),
+  rating      DECIMAL(3,2) DEFAULT 5.0,
+  created_at  TIMESTAMP DEFAULT NOW()
+);</pre>
+
+  <h3>2. drivers</h3>
+  <pre>CREATE TABLE drivers (
+  driver_id   UUID PRIMARY KEY,
+  name        VARCHAR(100),
+  email       VARCHAR(255) UNIQUE,
+  phone       VARCHAR(20),
+  vehicle_id  UUID REFERENCES vehicles(vehicle_id),
+  rating      DECIMAL(3,2) DEFAULT 5.0,
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+-- NOTE: driver location NOT here → Redis GEO (125K writes/sec)</pre>
+
+  <h3>3. vehicles</h3>
+  <pre>CREATE TABLE vehicles (
+  vehicle_id    UUID PRIMARY KEY,
+  driver_id     UUID REFERENCES drivers(driver_id),
+  make          VARCHAR(50),      -- Maruti, Honda
+  model         VARCHAR(50),      -- Swift, City
+  plate_number  VARCHAR(20) UNIQUE,
+  category      ENUM('MINI','SEDAN','SUV')
+);</pre>
+
+  <h3>4. ride_requests (SHORT-LIVED)</h3>
+  <pre>CREATE TABLE ride_requests (
+  request_id  UUID PRIMARY KEY,
+  rider_id    UUID REFERENCES riders(rider_id),
+  status      ENUM('PENDING','MATCHED','CANCELLED','TIMEOUT'),
+  source_lat  DECIMAL(10,7),
+  source_lng  DECIMAL(10,7),
+  dest_lat    DECIMAL(10,7),
+  dest_lng    DECIMAL(10,7),
+  created_at  TIMESTAMP DEFAULT NOW(),
+  expires_at  TIMESTAMP             -- created_at + 30s timeout
+);
+CREATE INDEX idx_ride_req_status ON ride_requests(status);
+CREATE INDEX idx_ride_req_rider  ON ride_requests(rider_id);
+
+-- WHY SEPARATE: no garbage rows in trips table.
+-- Unfulfilled requests auto-expire, trips = only confirmed rides.</pre>
+
+  <h3>5. trips (PERMANENT)</h3>
+  <pre>CREATE TABLE trips (
+  trip_id       UUID PRIMARY KEY,
+  request_id    UUID REFERENCES ride_requests(request_id),
+  rider_id      UUID REFERENCES riders(rider_id),
+  driver_id     UUID REFERENCES drivers(driver_id),
+  fare_id       UUID REFERENCES fare(fare_id),
+  status        ENUM('MATCHED','EN_ROUTE','PICKED_UP','COMPLETED','CANCELLED'),
+  source_lat    DECIMAL(10,7),
+  source_lng    DECIMAL(10,7),
+  dest_lat      DECIMAL(10,7),
+  dest_lng      DECIMAL(10,7),
+  started_at    TIMESTAMP,
+  completed_at  TIMESTAMP,
+  created_at    TIMESTAMP DEFAULT NOW()
+) PARTITION BY RANGE (created_at);  -- monthly partitions
+
+CREATE INDEX idx_trips_rider    ON trips(rider_id);
+CREATE INDEX idx_trips_driver   ON trips(driver_id);
+CREATE INDEX idx_trips_status   ON trips(status);
+CREATE INDEX idx_trips_created  ON trips(created_at);
+
+-- Active trips: PostgreSQL (ACID, SELECT FOR UPDATE for driver assignment)
+-- Trips older than 1yr: move to S3 archive</pre>
+
+  <h3>6. fare</h3>
+  <pre>CREATE TABLE fare (
+  fare_id           UUID PRIMARY KEY,
+  trip_id           UUID REFERENCES trips(trip_id),
+  base_fare         DECIMAL(10,2),
+  distance_fare     DECIMAL(10,2),
+  surge_multiplier  DECIMAL(4,2) DEFAULT 1.0,
+  total_fare        DECIMAL(10,2),
+  currency          VARCHAR(3) DEFAULT 'INR',
+  calculated_at     TIMESTAMP
+);</pre>
+
+  <h3>7. payments</h3>
+  <pre>CREATE TABLE payments (
+  payment_id       UUID PRIMARY KEY,
+  trip_id          UUID REFERENCES trips(trip_id),
+  rider_id         UUID REFERENCES riders(rider_id),
+  amount           DECIMAL(10,2),
+  status           ENUM('PENDING','SUCCESS','FAILED','REFUNDED'),
+  payment_method   ENUM('CARD','UPI','CASH','WALLET'),
+  gateway_txn_id   VARCHAR(100),    -- Razorpay/Stripe reference
+  idempotency_key  VARCHAR(100) UNIQUE,  -- trip_id based
+  created_at       TIMESTAMP DEFAULT NOW()
+);</pre>
+
+  <h3>8. ratings</h3>
+  <pre>CREATE TABLE ratings (
+  rating_id   UUID PRIMARY KEY,
+  trip_id     UUID REFERENCES trips(trip_id),
+  rated_by    UUID,   -- rider_id or driver_id
+  rated_to    UUID,   -- rider_id or driver_id
+  role        ENUM('RIDER','DRIVER'),
+  score       DECIMAL(2,1),
+  comment     VARCHAR(500),
+  created_at  TIMESTAMP DEFAULT NOW()
+);</pre>
+
+  <h3>Storage Split</h3>
+  <pre>PostgreSQL:   ride_requests, trips (active), payments, ratings
+MySQL:        riders, drivers, vehicles
+S3 Archive:   trips older than 1 year (via background job)</pre>
+
+  <div class="insight">
+    <strong>Why Two Tables for Rides?</strong>
+    ride_requests = short-lived (30s TTL). Not every request gets a driver. trips = permanent, only created when driver accepts. Keeps trips table clean — no garbage rows, no cleanup job needed for unfulfilled requests.
+  </div>
+</div>
+
+<!-- TAB 16: OBSERVABILITY -->
+<div class="tab-content">
+  <h2>Observability</h2>
+  <p style="color:var(--muted);margin-bottom:16px">Goal: know your system is about to fail before users feel it. Leading indicators over lagging indicators. RED method per service.</p>
+
+  <div class="insight">
+    <strong>Core Philosophy</strong>
+    Bad engineer: paged at 3 AM because riders cannot book. SDE2 engineer: paged at 2:45 AM because Kafka lag is trending up — fixes it before riders notice. The difference is leading vs lagging indicators.
+  </div>
+
+  <h3>RED Method — Apply to Every Service</h3>
+  <pre>R — Rate:     how many requests/sec is this service handling?
+E — Errors:   what % are failing?
+D — Duration: how long does each request take? (P50, P99)</pre>
+
+  <h3>1. Kafka Consumer Lag — Most Important Metric</h3>
+  <pre>ride-requests topic:
+  Producer offset:  5000
+  Consumer offset:  4990
+  LAG = 10  ← normal
+
+Alert thresholds:
+  lag > 100    → Warning  (Matching Service slowing)
+  lag > 1000   → Critical (has ~10 min before riders feel it)
+  lag growing exponentially → service crashed
+
+WHY better than CPU:
+  CPU spike = could be normal burst
+  Kafka lag growing = service falling behind → will cascade
+  Lag gives you TIME to act before user impact.</pre>
+
+  <h3>2. Redis GEO — P99 Latency</h3>
+  <pre>Metric: GEORADIUS query latency
+  P50  &lt; 1ms   → normal
+  P99  &lt; 5ms   → normal
+  P99  &gt; 20ms  → WARNING — hot key or memory pressure
+  P99  &gt; 100ms → CRITICAL — Redis overloaded
+
+What causes Redis P99 spike:
+  1. Hot key    → all drivers in one geohash cell → single key overloaded
+  2. Memory     → Redis near maxmemory → eviction overhead
+  3. Large query→ GEORADIUS 50km radius → too many results
+  4. Network    → Redis and Location Service in different AZs</pre>
+
+  <h3>3. Location Service — WebSocket Metrics</h3>
+  <pre>active_websocket_connections:  should be ~500K at peak
+  Alert if: drops below 400K suddenly → mass disconnect event
+
+connection_drop_rate:
+  Normal: ~0.1%/min (drivers finishing trips)
+  Alert if: &gt; 1%/min → pod crashed or network partition
+
+heartbeat_miss_rate:
+  Alert if: &gt; 5% drivers missing heartbeat → widespread connectivity issue
+
+message_send_failure_rate:
+  Alert if: &gt; 0.1% → WebSocket push failing</pre>
+
+  <h3>4. Matching Service Metrics</h3>
+  <pre>match_success_rate:       Alert if &lt; 85%
+match_latency_p99:        Alert if &gt; 5 seconds
+rides_with_no_match:      Rising = driver supply problem
+average_match_time:       Business health metric</pre>
+
+  <h3>5. Business Metrics (Don't Forget These)</h3>
+  <pre>rides_booked_per_sec:     Sudden drop = booking flow broken (revenue proxy)
+average_match_time:       Rising = fewer drivers or matching slow
+cancellation_rate:        Rising = driver declining or rider frustrated
+rides_with_no_driver:     Rising = supply problem in certain geohashes</pre>
+
+  <h3>Observability Stack</h3>
+  <pre>Metrics collection:   Prometheus (scrapes every 15s)
+Visualization:        Grafana dashboards (one per service)
+Alerting:             AlertManager → PagerDuty → on-call
+Distributed tracing:  Jaeger (traces API GW → Matching → Redis → Trip)
+Log aggregation:      ELK stack (Elasticsearch + Logstash + Kibana)</pre>
+
+  <h3>Runbook — Matching Service Degrading</h3>
+  <pre>Alert fires: Kafka lag &gt; 1000 on ride-requests topic
+
+Step 1: kubectl get pods -n matching-service
+        → Pods crashing? Check logs for OOM / exception
+
+Step 2: Check Grafana: matching_service_processing_duration_p99
+        → High? Redis GEO query slow → check Redis P99
+
+Step 3: Check Redis memory / hot key analysis
+        → MEMORY DOCTOR, OBJECT FREQ commands
+
+Step 4: Scale horizontally
+        kubectl scale deployment matching-service --replicas=10
+        More consumers = faster lag drain
+
+Step 5: If Kafka broker issue
+        → Check broker health, leader election in progress?</pre>
+
+  <div class="insight">
+    <strong>Interview Answer — "How do you know system is healthy?"</strong>
+    Three things: (1) Kafka consumer lag on ride-requests — if growing past 1000 messages, Matching Service falling behind, ~10 min before riders feel it. (2) Redis GEO P99 — above 20ms signals hot key or memory pressure. (3) Business metric: average match time — if rising above 8 seconds, something upstream degrading even if technical metrics look fine.
+  </div>
+</div>
+
+
+<script>
+  const tabs = document.querySelectorAll('.tab-content');
+  const btns = document.querySelectorAll('.tab-btn');
+
+  function showTab(i) {
+    tabs.forEach((t,j) => t.classList.toggle('active', i===j));
+    btns.forEach((b,j) => b.classList.toggle('active', i===j));
+    window.scrollTo({top:0, behavior:'smooth'});
+  }
+
+  function toggleQA(el) {
+    el.parentElement.classList.toggle('open');
+  }
+</script>
+</body>
+</html>
