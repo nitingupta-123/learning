@@ -65,7 +65,16 @@ interface SignatureAlgorithm {
       return `solana_signed:${walletAddress}:${nonce}`;
     }
   }
-  
+
+/*
+
+Arrow function kyun — () => new EthereumSigner() — direct new nahi:
+
+Lazy — jab maango tab object banega, pehle se nahi
+Fresh instance — har call pe naya object, state share nahi hoga
+Side effects avoid — constructor heavy ho toh tabhi chalega jab actually zaroorat ho
+
+*/
   
   // ── 5. Signer Registry (Map — NOT if-else) ─────────────────────────────────
   // OCP: adding a new chain = one new line here, zero changes elsewhere
